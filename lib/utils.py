@@ -372,3 +372,271 @@ def get_default_config(args):
         with Path('configs/default.yaml').open('r') as f:
             default_conf = yaml.safe_load(f)
     return dict(default_conf)
+
+# Adapted from: https://github.com/googleinterns/local_global_ts_representation/blob/main/gl_rep/data_loaders.py
+def get_physionet(dataset = 'set-a'):
+    """Function to load the The PhysioNet Computing in Cardiology Challenge 2012 dataset into TF dataset objects
+
+    The data is loaded, normalized, padded, and a mask channel is generated to indicate missing observations
+    The raw csv files can be downloaded from:
+    https://physionet.org/content/challenge-2012/1.0.0/
+    A number of steps are borrowed from this repo: https://github.com/alistairewj/challenge2012
+
+    Args:
+        normalize: The type of data normalizatino to perform ["none", "mean_zero", "min_max"]
+    """
+    feature_map = {'Albumin': 'Serum Albumin (g/dL)',
+                'ALP': 'Alkaline phosphatase (IU/L)',
+                'ALT': 'Alanine transaminase (IU/L)',
+                'AST': 'Aspartate transaminase (IU/L)',
+                'Bilirubin': 'Bilirubin (mg/dL)',
+                'BUN': 'Blood urea nitrogen (mg/dL)',
+                'Cholesterol': 'Cholesterol (mg/dL)',
+                'Creatinine': 'Serum creatinine (mg/dL)',
+                'DiasABP': 'Invasive diastolic arterial blood pressure (mmHg)',
+                'FiO2': 'Fractional inspired O2 (0-1)',
+                'GCS': 'Glasgow Coma Score (3-15)',
+                'Glucose': 'Serum glucose (mg/dL)',
+                'HCO3': 'Serum bicarbonate (mmol/L)',
+                'HCT': 'Hematocrit (%)',
+                'HR': 'Heart rate (bpm)',
+                'K': 'Serum potassium (mEq/L)',
+                'Lactate': 'Lactate (mmol/L)',
+                'Mg': 'Serum magnesium (mmol/L)',
+                'MAP': 'Invasive mean arterial blood pressure (mmHg)',
+                'Na': 'Serum sodium (mEq/L)',
+                'NIDiasABP': 'Non-invasive diastolic arterial blood pressure (mmHg)',
+                'NIMAP': 'Non-invasive mean arterial blood pressure (mmHg)',
+                'NISysABP': 'Non-invasive systolic arterial blood pressure (mmHg)',
+                'PaCO2': 'partial pressure of arterial CO2 (mmHg)',
+                'PaO2': 'Partial pressure of arterial O2 (mmHg)',
+                'pH': 'Arterial pH (0-14)',
+                'Platelets': 'Platelets (cells/nL)',
+                'RespRate': 'Respiration rate (bpm)',
+                'SaO2': 'O2 saturation in hemoglobin (%)',
+                'SysABP': 'Invasive systolic arterial blood pressure (mmHg)',
+                'Temp': 'Temperature (°C)',
+                'TroponinI': 'Troponin-I (μg/L)',
+                'TroponinT': 'Troponin-T (μg/L)',
+                'Urine': 'Urine output (mL)',
+                'WBC': 'White blood cell count (cells/nL)'
+                   }
+    feature_list = list(feature_map.keys())
+    local_list = ['MechVent', 'Weight']
+    data_dir = './data/physionet'
+    static_vars = ['RecordID', 'Age', 'Gender', 'Height', 'ICUType', 'Weight']
+    
+    if os.path.exists(('./data/physionet/processed_df.csv')):
+        df_full = pd.read_csv('./data/physionet/processed_df.csv')
+        df_static = pd.read_csv('./data/physionet/processed_static_df.csv')
+    else:
+        txt_all = list()
+        for f in os.listdir(os.path.join(data_dir, dataset)):
+            with open(os.path.join(data_dir, dataset, f), 'r') as fp:
+                txt = fp.readlines()
+            # get recordid to add as a column
+            recordid = txt[1].rstrip('\n').split(',')[-1]
+            try:
+                txt = [t.rstrip('\n').split(',') + [int(recordid)] for t in txt]
+                txt_all.extend(txt[1:])
+            except:
+                continue
+
+        # convert to pandas dataframe
+        df = pd.DataFrame(txt_all, columns=['time', 'parameter', 'value', 'recordid'])
+
+        # extract static variables into a separate dataframe
+        df_static = df.loc[df['time'] == '00:00', :].copy()
+
+        df_static = df_static.loc[df['parameter'].isin(static_vars)]
+
+        # remove these from original df
+        idxDrop = df_static.index
+        df = df.loc[~df.index.isin(idxDrop), :]
+
+        # pivot on parameter so there is one column per parameter
+        df_static = df_static.pivot(index='recordid', columns='parameter', values='value')
+
+        # some conversions on columns for convenience
+        df['value'] = pd.to_numeric(df['value'], errors='raise')
+        df['time'] = df['time'].map(lambda x: int(x.split(':')[0]) * 60 + int(x.split(':')[1]))
+
+        df.head()
+        # convert static into numeric
+        for c in df_static.columns:
+            df_static[c] = pd.to_numeric(df_static[c])
+
+        # preprocess
+        for c in df_static.columns:
+            x = df_static[c]
+            if c == 'Age':
+                # replace anon ages with 91.4
+                idx = x > 130
+                df_static.loc[idx, c] = 91.4
+            elif c == 'Gender':
+                idx = x < 0
+                df_static.loc[idx, c] = np.nan
+            elif c == 'Height':
+                idx = x < 0
+                df_static.loc[idx, c] = np.nan
+
+                # fix incorrectly recorded heights
+
+                # 1.8 -> 180
+                idx = x < 10
+                df_static.loc[idx, c] = df_static.loc[idx, c] * 100
+
+                # 18 -> 180
+                idx = x < 25
+                df_static.loc[idx, c] = df_static.loc[idx, c] * 10
+
+                # 81.8 -> 180 (inch -> cm)
+                idx = x < 100
+                df_static.loc[idx, c] = df_static.loc[idx, c] * 2.2
+
+                # 1800 -> 180
+                idx = x > 1000
+                df_static.loc[idx, c] = df_static.loc[idx, c] * 0.1
+
+                # 400 -> 157
+                idx = x > 250
+                df_static.loc[idx, c] = df_static.loc[idx, c] * 0.3937
+
+            elif c == 'Weight':
+                idx = x < 35
+                df_static.loc[idx, c] = np.nan
+
+                idx = x > 299
+                df_static.loc[idx, c] = np.nan
+
+
+        df = delete_value(df, 'DiasABP', -1)
+        df = replace_value(df, 'DiasABP', value=np.nan, below=1)
+        df = replace_value(df, 'DiasABP', value=np.nan, above=200)
+        df = replace_value(df, 'SysABP', value=np.nan, below=1)
+        df = replace_value(df, 'MAP', value=np.nan, below=1)
+
+        df = replace_value(df, 'NIDiasABP', value=np.nan, below=1)
+        df = replace_value(df, 'NISysABP', value=np.nan, below=1)
+        df = replace_value(df, 'NIMAP', value=np.nan, below=1)
+
+        df = replace_value(df, 'HR', value=np.nan, below=1)
+        df = replace_value(df, 'HR', value=np.nan, above=299)
+
+        df = replace_value(df, 'PaCO2', value=np.nan, below=1)
+        df = replace_value(df, 'PaCO2', value=lambda x: x * 10, below=10)
+
+        df = replace_value(df, 'PaO2', value=np.nan, below=1)
+        df = replace_value(df, 'PaO2', value=lambda x: x * 10, below=20)
+
+        # the order of these steps matters
+        df = replace_value(df, 'pH', value=lambda x: x * 10, below=0.8, above=0.65)
+        df = replace_value(df, 'pH', value=lambda x: x * 0.1, below=80, above=65)
+        df = replace_value(df, 'pH', value=lambda x: x * 0.01, below=800, above=650)
+        df = replace_value(df, 'pH', value=np.nan, below=6.5)
+        df = replace_value(df, 'pH', value=np.nan, above=8.0)
+
+        # convert to farenheit
+        df = replace_value(df, 'Temp', value=lambda x: x * 9 / 5 + 32, below=10, above=1)
+        df = replace_value(df, 'Temp', value=lambda x: (x - 32) * 5 / 9, below=113, above=95)
+
+        df = replace_value(df, 'Temp', value=np.nan, below=25)
+        df = replace_value(df, 'Temp', value=np.nan, above=45)
+
+        df = replace_value(df, 'RespRate', value=np.nan, below=1)
+        df = replace_value(df, 'WBC', value=np.nan, below=1)
+
+        df = replace_value(df, 'Weight', value=np.nan, below=35)
+        df = replace_value(df, 'Weight', value=np.nan, above=299)
+
+
+        df_full = pd.DataFrame(columns=['time', 'recordid']+feature_list+local_list)
+        df_sampled = df.groupby(['recordid'])#, 'parameter'])
+        for i, sample in enumerate(df_sampled):
+            id = sample[0]
+            df_signal = sample[1].groupby(['parameter'])
+            signal_df = pd.DataFrame(columns=['time', 'recordid'])
+            for j, signal_sample in enumerate(df_signal):
+                param = signal_sample[0]
+                sub_df = pd.DataFrame(columns=['time', 'recordid']+[param])
+                sub_df[param] = signal_sample[1]['value']
+                sub_df['recordid'] = id
+                sub_df['time'] = signal_sample[1]['time']
+                signal_df = signal_df.merge(sub_df, how='outer', on=['recordid', 'time'], sort=True, suffixes=[None, None])
+            # Bin the values
+            bins = pd.cut(signal_df.time, np.arange(signal_df['time'].iloc[0], signal_df['time'].iloc[-1], 60))
+            col_list = list(signal_df.columns[2:])# - ['recordid', 'time']
+            signal_df_binned =  pd.DataFrame(columns=signal_df.columns)
+            signal_df_binned['time'] = np.arange(signal_df['time'].iloc[0], signal_df['time'].iloc[-1], 60)[:-1]
+            signal_df_binned['recordid'] = id
+            signal_df_binned[col_list] = signal_df.groupby(bins).agg(dict(zip(col_list, ["mean"]*len(col_list)))).to_numpy()#{"Temperature": "mean"})
+            df_full = pd.concat([signal_df_binned, df_full])
+        df_full.to_csv('./data/physionet/processed_df.csv')
+        df_static.to_csv('./data/physionet/processed_static_df.csv')
+
+
+    selected_features = ['DiasABP', 'GCS', 'HCT', 'MAP', 'NIDiasABP', 'NIMAP', 'NISysABP', 'RespRate', 'SysABP', 'Temp']
+
+    # load in outcomes
+    if dataset == 'set-a':
+        y = pd.read_csv(os.path.join(data_dir, 'Outcomes-a.txt'))
+    elif dataset == 'set-b':
+        y = pd.read_csv(os.path.join(data_dir,  'Outcomes-.txt'))
+    label_list = ['SAPS-I', 'SOFA', 'In-hospital_death']
+
+
+    df_sampled = df_full.groupby(['recordid'])
+    max_len = 80
+    signals, signal_maps, signal_lens = [], [], []
+    z_ls, z_gs = [], []
+    for i, sample in enumerate(df_sampled):
+        id = sample[0]
+        x = sample[1][selected_features]
+        if np.array(x.isna()).mean()>0.6 or len(x)<0.5*max_len:
+            continue
+        sample_map = x.isna().astype('float32')
+        labels = y[y['RecordID']==id][label_list]
+        z_l = sample[1][['MechVent']]
+        x = x.fillna(0.0)
+        z_g = df_static[df_static['RecordID']==id][['Age', 'Gender', 'Height', 'ICUType', 'Weight']]
+        signals.append(np.array(x))
+        signal_maps.append(np.array(sample_map))
+        z_ls.append(np.array(z_l))
+        z_gs.append(np.concatenate([np.array(z_g), np.array(labels)], axis=-1).reshape(-1,))
+        signal_lens.append(min(max_len, len(x)))
+    signals = tf.keras.preprocessing.sequence.pad_sequences(signals, maxlen=max_len, padding='post', value=0.0, dtype='float32')
+    locals = tf.keras.preprocessing.sequence.pad_sequences(z_ls, maxlen=max_len, padding='post', value=0.0, dtype='float32')
+    maps = tf.keras.preprocessing.sequence.pad_sequences(signal_maps, maxlen=max_len, padding='post', value=1.0, dtype='float32')
+    z_gs = np.array(z_gs)
+    signal_lens = np.array(signal_lens)
+
+    test_inds = list(range(int(0.2*len(signals))))
+    inds = list(range(int(0.2*len(signals)), len(signals)))
+    rng = np.random.default_rng(seed)
+    rng.shuffle(inds)
+    train_inds = inds[:int(0.8*len(inds))]
+    valid_inds = inds[int(0.8*len(inds)):]
+
+    # plot a random sample
+    ind = np.random.randint(0, len(train_inds))
+    f, axs = plt.subplots(nrows=signals.shape[-1], ncols=1, figsize=(18, 14))
+    for i, ax in enumerate(axs):
+        ax.plot(signals[ind, :, i])
+        ax.set_title(feature_list[i])
+    plt.tight_layout()
+    plt.savefig('./data/physionet/sample.png')
+
+    x = signals[train_inds]
+    print(x.shape)
+    quit()
+
+    train_signals, valid_signals, test_signals, normalization_specs = normalize_signals(signals, maps,
+                                                                                        (train_inds, valid_inds, test_inds),
+                                                                                        normalize)
+    trainset = tf.data.Dataset.from_tensor_slices((train_signals, maps[train_inds], signal_lens[train_inds],
+                                                   locals[train_inds], z_gs[train_inds])).batch(20)
+    validset = tf.data.Dataset.from_tensor_slices((valid_signals, maps[valid_inds], signal_lens[valid_inds],
+                                                   locals[valid_inds], z_gs[valid_inds])).batch(10)
+    testset = tf.data.Dataset.from_tensor_slices((test_signals, maps[test_inds], signal_lens[test_inds],
+                                                  locals[test_inds], z_gs[test_inds])).batch(30)
+    return trainset, validset, testset, normalization_specs

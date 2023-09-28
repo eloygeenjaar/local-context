@@ -6,153 +6,96 @@ from torch import optim, nn
 from torch import distributions as D
 from torch.nn import functional as F
 from scipy.stats import pearsonr
+# Import all kernel functions
+from .modules import EncoderLocal, EncoderGlobal, WindowDecoder
 from sklearn.linear_model import LinearRegression
-from .modules import MLP
 from .utils import mean_corr_coef as mcc
 from numbers import Number
 
 
-def weights_init(m):
-    if isinstance(m, nn.Linear):
-        nn.init.xavier_uniform_(m.weight.data)
-
-def _check_inputs(size, mu, v):
-    """helper function to ensure inputs are compatible"""
-    if size is None and mu is None and v is None:
-        raise ValueError("inputs can't all be None")
-    elif size is not None:
-        if mu is None:
-            mu = torch.Tensor([0])
-        if v is None:
-            v = torch.Tensor([1])
-        if isinstance(v, Number):
-            v = torch.Tensor([v]).type_as(mu)
-        v = v.expand(size)
-        mu = mu.expand(size)
-        return mu, v
-    elif mu is not None and v is not None:
-        if isinstance(v, Number):
-            v = torch.Tensor([v]).type_as(mu)
-        if v.size() != mu.size():
-            v = v.expand(mu.size())
-        return mu, v
-    elif mu is not None:
-        v = torch.Tensor([1]).type_as(mu).expand(mu.size())
-        return mu, v
-    elif v is not None:
-        mu = torch.Tensor([0]).type_as(v).expand(v.size())
-        return mu, v
-    else:
-        raise ValueError('Given invalid inputs: size={}, mu_logsigma={})'.format(size, (mu, v)))
-
-def log_normal(x, mu=None, v=None, broadcast_size=False):
-    """compute the log-pdf of a normal distribution with diagonal covariance"""
-    if not broadcast_size:
-        mu, v = _check_inputs(None, mu, v)
-    else:
-        mu, v = _check_inputs(x.size(), mu, v)
-    assert mu.shape == v.shape
-    return -0.5 * (np.log(2 * np.pi) + v.log() + (x - mu).pow(2).div(v))
-
-# From https://github.com/ilkhem/iVAE/blob/master/models/nets.py
 class BaseModel(pl.LightningModule):
-    def __init__(self, input_size, latent_dim, aux_dim, size_dataset,
-                 num_layers=3, activation='xtanh', hidden_dim=50, slope=.1,
-                 hyperparam_tuple=(1., 1., 1., 1.)):
+    def __init__(self, input_size, time_length, local_size, global_size, window_size=20,
+                 kernel='cauchy', beta=1., lamda=1., M=1, sigma=1.0,
+                 length_scale=1.0, kernel_scales=1, p=100):
         super().__init__()
+        self.local_size = local_size
+        self.global_size = global_size
+        self.global_encoder = EncoderGlobal(input_size, global_size, 64, 3, window_size, 3)
+        self.local_encoder = EncoderLocal(input_size, local_size, window_size, 64, 3)
         self.input_size = input_size
-        self.latent_dim = latent_dim
-        self.aux_dim = aux_dim
-        self.size_dataset = size_dataset
-        self.num_layers = num_layers
-        self.activation = activation
-        self.hidden_dim = hidden_dim
-        self.slope = slope
-        self.a, self.b, self.c, self.d = hyperparam_tuple
-
-        # prior params
-        self.prior_mean = nn.Parameter(torch.zeros(1), requires_grad=False)
-        # decoder params
-        self.f = MLP(latent_dim, input_size, hidden_dim, num_layers, activation=activation, slope=slope)
-        #self.decoder_sd = nn.Parameter((.1 * torch.ones(1)).sqrt(), requires_grad=False)
-        self.decoder_var = nn.Parameter(.1 * torch.ones(1), requires_grad=False)
+        self.window_size = window_size
+        self.decoder = WindowDecoder(input_size, local_size, global_size, window_size, 64, 4)
+        self.beta = beta
+        self.lamda = lamda
         # encoder params
         self.automatic_optimization = False
         self.save_hyperparameters()
 
-    @staticmethod
-    def reparameterize(mu, v):
-        eps = torch.randn_like(mu)
-        scaled = eps.mul(v.sqrt())
-        return scaled.add(mu)
+    def forward(self, x):
+        batch_size, num_timesteps, _ = x.size()
+        h_l, global_dist = self.global_encoder(x, self.training)
+        h_g, local_dist = self.local_encoder(x, window_size=self.window_size)
+        z_t = local_dist.rsample()
+        z_g = global_dist.rsample()
+        p_x_hat = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
+        #h_l = torch.reshape(h_l, (batch_size * num_timesteps, -1))
+        #h_g = h_g.view(batch_size * num_timesteps, -1)
+        #angle = F.cosine_similarity(h_l, h_g, dim=1).pow(2).view(batch_size, num_timesteps).sum(1)
+        angle = torch.zeros((1, ), device=x.device)
+        return p_x_hat, local_dist, global_dist, z_t, z_g, angle.detach()
 
-    def encoder(self, x, u):
-        raise NotImplementedError
-
-    def decoder(self, z):
-        rec = self.f(z)
-        return rec
-
-    def prior(self, u):
-        raise NotImplementedError
-
-    def forward(self, x, u):
-        prior_mu, prior_var = self.prior(u)
-        mu, var = self.encoder(x, u)
-        z = self.reparameterize(mu, var)
-        rec = self.decoder(z)
-        return rec, mu, var, z, prior_var
-
-    def elbo(self, x, gt, u):
-        f, g, v, z, l = self.forward(x, u)
+    def elbo(self, x):
         batch_size, num_timesteps, input_size = x.size()
 
-        x = x.view(batch_size * num_timesteps, input_size)
-        u = u.view(batch_size * num_timesteps, self.aux_dim)
-        gt = gt.view(batch_size * num_timesteps, self.latent_dim)
-        logpx = log_normal(x, f, self.decoder_var.to(x.device)).sum(dim=-1)
-        logqs_cux = log_normal(z, g, v).sum(dim=-1)
-        logps_cu = log_normal(z, None, l).sum(dim=-1)
+        x_hat_dist, pz_t, p_zg, z_t, z_g, angle = self.forward(x)
+        pz_mu = torch.cat((torch.zeros((batch_size, 1, self.local_size), device=x.device), pz_t.mean[:, :-1]), dim=1)
+        pz_sd = torch.cat((torch.ones((batch_size, 1, self.local_size), device=x.device), pz_t.stddev[:, :-1]), dim=1)
+        pz = D.Normal(pz_mu, pz_sd)
+        cf_loss = torch.zeros((1, ), device=x.device)
+        #if self.lamda!=0:
+        #    z_g_2 = torch.randn(z_g.size(), device=x.device)
+        #    cf_dist = self.decoder(z_t, z_g_2, output_len=self.window_size)
+        #    _, pos_zg = self.global_encoder(cf_dist.rsample())
+        #    cf_loss = (pos_zg.log_prob(z_g)-pos_zg.log_prob(z_g_2)).exp().mean(-1)
+        p_zg_1 = D.Normal(p_zg.mean[:batch_size], p_zg.stddev[:batch_size])
+        #p_zg_2 = D.Normal(p_zg.mean[batch_size:], p_zg.stddev[batch_size:])
+        #cf_loss = p_zg_1.log_prob(z_g[batch_size:]) + p_zg_2.log_prob(z_g[:batch_size])
 
-        # no view for v to account for case where it is a float. It works for general case because mu shape is (1, batch_size, d)
-        logqs_tmp = log_normal(
-            z.view(batch_size * num_timesteps, 1, self.latent_dim),
-            g.view(1, batch_size * num_timesteps, self.latent_dim),
-            v.view(1, batch_size * num_timesteps, self.latent_dim))
-        logqs = torch.logsumexp(logqs_tmp.sum(dim=-1), dim=1, keepdim=False) - np.log(batch_size * num_timesteps * self.size_dataset)
-        logqs_i = (torch.logsumexp(logqs_tmp, dim=1, keepdim=False)
-                   - np.log(batch_size * num_timesteps * self.size_dataset)).sum(dim=-1)
+        nll = -x_hat_dist.log_prob(x)  # shape=(M*batch_size, time, dimensions)
+        kl_l = D.kl.kl_divergence(pz_t, pz) / (x.size(1) // self.window_size)
+        kl_l = kl_l.mean(dim=(1,2))  # shape=(M*batch_size, time, dimensions)
 
-        elbo = -(self.a * logpx -
-                 self.b * (logqs_cux - logqs) -
-                 self.c * (logqs - logqs_i) -
-                 self.d * (logqs_i - logps_cu)).mean()
-        r = mcc(gt, z)
-        return elbo, r
+        nll = nll.mean(dim=(1,2))
+        kl_g = D.kl.kl_divergence(p_zg_1, D.Normal(loc=0, scale=1.)).sum(-1)
+        elbo = (-nll - self.beta * (kl_l + kl_g) - self.lamda * cf_loss).mean()  # shape=(M*batch_size)
+
+        mse = F.mse_loss(x_hat_dist.mean, x).detach()
+
+        return -elbo, nll.mean(), kl_l.mean(), kl_g.mean(), cf_loss.mean(), mse.mean()
 
     def training_step(self, batch, batch_ix):
-        x, gt, u = batch
+        x, y = batch
         opt = self.optimizers()
         # Forward pass
-        elbo, r = self.elbo(x, gt, u)
+        elbo, nll, kl_l, kl_g, cf, mse = self.elbo(x)
         # Optimization
         opt.zero_grad()
         self.manual_backward(elbo)
         opt.step()
         #print(elbo, r)
-        self.log_dict({"tr_elbo": elbo, "tr_corr": r}, prog_bar=True, on_epoch=True,
+        self.log_dict({"tr_elbo": elbo, "tr_nll": nll, "tr_kl_l": kl_l, "tr_kl_g": kl_g, "tr_mse": mse, "tr_cf": cf}, prog_bar=True, on_epoch=True,
                         logger=True)
 
     def validation_step(self, batch, batch_idx):
         # this is the validation loop
-        x, gt, u = batch
-        elbo, r = self.elbo(x, gt, u)
-        self.log_dict({"va_elbo": elbo, "va_corr": r}, prog_bar=True, on_epoch=True,
+        x, y = batch
+        elbo, nll, kl_l, kl_g, cf, mse = self.elbo(x)
+        self.log_dict({"va_elbo": elbo, "va_nll": nll, "va_kl_l": kl_l, "va_kl_g": kl_g, "va_mse": mse, "va_cf": cf}, prog_bar=True, on_epoch=True,
                         logger=True)
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=0.01)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=1, verbose=True)
+        optimizer = optim.Adam(self.parameters(), lr=0.001)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=5, verbose=True)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
     def on_validation_epoch_end(self):
@@ -160,95 +103,25 @@ class BaseModel(pl.LightningModule):
         if "va_elbo" in self.trainer.callback_metrics:
             sch.step(self.trainer.callback_metrics["va_elbo"])
 
-class VAE(BaseModel):
+
+class GLR(BaseModel):
     def __init__(self, *args, **kwargs):
+        """
+        Decoupled Global and Local Representation learning (GLR) model
+
+        Attributes:
+            global_encoder: Encoder model that learns the global representation for each time series sample
+            local_encoder: Encoder model that learns the local representation of time series windows over time
+            decoder: Decoder model that generated the time series sample distribution
+            time_length: Maximum length of the time series samples
+            data_dim: Input data dimension (number of features)
+            window_size: Length of the time series window to learn representations for
+            kernel: Gaussian Process kernels for different dimensions of local representations
+            beta: KL divergence weight in loss term
+            lamda: Counterfactual regularization weight in the loss term
+            M: Number of Monte-Carlo samples
+            lambda: Counterfactual regularization weight
+            length_scale: Kernel length scale
+            kernel_scales: number of different length scales over latent space dimensions
+        """
         super().__init__(*args, **kwargs)
-        self.g = MLP(self.input_size, self.latent_dim, self.hidden_dim, self.num_layers,
-                     activation=self.activation, slope=self.slope)
-        self.logv = MLP(self.input_size, self.latent_dim, self.hidden_dim, self.num_layers,
-                        activation=self.activation, slope=self.slope)
-        self.prior_var = nn.Parameter(torch.ones(1), requires_grad=False)
-        #self.apply(weights_init)
-
-    def prior(self, u):
-        return self.prior_mean, self.prior_var
-
-    def encoder(self, x, u):
-        g = self.g(x)
-        logv = self.logv(x)
-        return g, logv.exp()
-
-
-class iVAE(BaseModel):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.g = MLP(self.input_size + self.aux_dim, self.latent_dim, self.hidden_dim, self.num_layers,
-                     activation=self.activation, slope=self.slope)
-        self.logv = MLP(self.input_size + self.aux_dim, self.latent_dim, self.hidden_dim, self.num_layers,
-                        activation=self.activation, slope=self.slope)
-        self.logl = MLP(self.aux_dim, self.latent_dim, self.hidden_dim, self.num_layers,
-                        activation=self.activation, slope=self.slope)
-        #self.apply(weights_init)
-
-    def prior(self, u):
-        batch_size, num_timesteps, aux_dim = u.size()
-        u = u.view(batch_size * num_timesteps, aux_dim)
-        logl = self.logl(u)
-        return self.prior_mean, torch.exp(logl)
-
-    def encoder(self, x, u):
-        batch_size, num_timesteps, input_size = x.size()
-        x = x.view(batch_size * num_timesteps, input_size)
-        u = u.view(batch_size * num_timesteps, self.aux_dim)
-        xu = torch.cat((x, u), 1)
-        g = self.g(xu)
-        logv = self.logv(xu)
-        return g, logv.exp()
-
-
-class HiVAE(BaseModel):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.faux_dim = 2
-        self.g = MLP(self.input_size + self.faux_dim, self.latent_dim, self.hidden_dim, self.num_layers,
-                     activation=self.activation, slope=self.slope)
-        self.logv = MLP(self.input_size + self.faux_dim, self.latent_dim, self.hidden_dim, self.num_layers,
-                        activation=self.activation, slope=self.slope)
-        self.logl = MLP(self.faux_dim, self.latent_dim, self.hidden_dim, self.num_layers,
-                        activation=self.activation, slope=self.slope)
-        self.h_gru = nn.Parameter(torch.randn(1, 1, 50))
-        self.z_gru = nn.Parameter(torch.randn(1, 1, self.latent_dim))
-        self.gru = nn.GRU(input_size=self.latent_dim, hidden_size=50, batch_first=True)
-        self.gru_to_u = nn.Linear(50, self.faux_dim)
-        #self.apply(weights_init)
-
-    def forward(self, x, u):
-        mu, var, z, prior_var, _ = self.encoder(x, u)
-        rec = self.decoder(z)
-        return rec, mu, var, z, prior_var
-
-    def encoder(self, x, u):
-        batch_size, num_timesteps, in_size = x.size()
-        z_t = self.z_gru.repeat(batch_size, 1, 1)
-        h_t = self.h_gru.repeat(1, batch_size, 1)
-        mus, vars, zs, prior_vars, us = [], [], [], [], []
-        for t in range(num_timesteps):
-            _, h_t = self.gru(z_t, h_t)
-            u_t = self.gru_to_u(h_t).squeeze(0)
-            x_t = torch.cat((x[:, t], u_t), dim=-1)
-            mu = self.g(x_t)
-            var = self.logv(x_t).exp()
-            z = self.reparameterize(mu, var)
-            z_t = z.unsqueeze(1)
-            prior_var = self.logl(u_t).exp()
-            mus.append(mu)
-            vars.append(var)
-            zs.append(z)
-            prior_vars.append(prior_var)
-            us.append(u_t)
-        mus = torch.stack(mus, dim=1).view(batch_size * num_timesteps, self.latent_dim)
-        vars = torch.stack(vars, dim=1).view(batch_size * num_timesteps, self.latent_dim)
-        z = torch.stack(zs, dim=1).view(batch_size * num_timesteps, self.latent_dim)
-        prior_var = torch.stack(prior_vars, dim=1).view(batch_size * num_timesteps, self.latent_dim)
-        u = torch.stack(us, dim=1)
-        return mus, vars, z, prior_var, u

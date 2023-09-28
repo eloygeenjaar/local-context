@@ -10,6 +10,8 @@ class_dict = {
     4: (0.8, -0.05, 0.8, 20, 1.5)
 }
 
+# From: https://proceedings.mlr.press/v151/tonekaboni22a.html
+
 def generate_data(alpha, gamma, a, b, c):
     t = np.linspace(0, 2*np.pi, 100)
     classes = np.random.randint(1, 5, size=(500, ))
