@@ -1,39 +1,47 @@
 import os
+import sys
 import torch
 import importlib
 import numpy as np
-from torch import optim, nn
+import lightning.pytorch as pl
 from lib.utils import get_default_config
-from lib.data import Simulation, AirQuality
-from lib.model import GLR
-from lib.utils import mean_corr_coef as mcc
 from torch.utils.data import DataLoader
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-import lightning.pytorch as pl
+
 
 if __name__ == "__main__":
+    torch.backends.cudnn.deterministic=True
     torch.set_float32_matmul_precision('medium')
-    config = get_default_config([''])
+    config = get_default_config(sys.argv)
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
-    version = f'{config["model_name"]}_mae'
-    train_dataset = AirQuality('train', config["seed"])
-    valid_dataset = AirQuality('valid', config["seed"])
-    model = GLR(config["input_size"], config["time_length"], config["local_size"], config["global_size"],
-                window_size=config["window_size"], kernel=list(config["kernel"]), beta=config["beta"],
-                 length_scale=config["length_scale"], kernel_scales=config["kernel_scales"])
+    torch.cuda.manual_seed(config["seed"])
+    version = f'm{config["model"]}_d{config["dataset"]}_g{config["gamma"]}_s{config["seed"]}_n{config["normalization"]}_s{config["local_size"]}_g{config["global_size"]}_f{config["fold_ix"]}'
+    data_module = importlib.import_module('lib.data')
+    dataset_type = getattr(data_module, config['dataset'])
+    # The last two arguments are only used for fBIRN
+    train_dataset = dataset_type('train', config['normalization'], config["seed"], config['num_folds'], config['fold_ix'])
+    valid_dataset = dataset_type('valid', config['normalization'], config["seed"], config['num_folds'], config['fold_ix'])
+    window_size, mask_windows, lr = train_dataset.window_size, train_dataset.mask_windows, train_dataset.learning_rate
+    assert train_dataset.data_size == valid_dataset.data_size
+    config['input_size'] = train_dataset.data_size
+    model_module = importlib.import_module('lib.model')
+    model_type = getattr(model_module, config['model'])
+    model = model_type(config["input_size"], config["local_size"], config["global_size"],
+                       window_size=window_size, beta=config["beta"], gamma=config["gamma"],
+                       mask_windows=mask_windows, lr=lr, seed=config['seed'])
     tb_logger = TensorBoardLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
     csv_logger = CSVLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
     checkpoint_callback = ModelCheckpoint(filename="best", save_last=False, monitor="va_elbo")
-    early_stopping = EarlyStopping(monitor="va_elbo", patience=10, mode="min")
-    trainer = pl.Trainer(max_epochs=100, logger=[tb_logger, csv_logger],
-                         callbacks=[checkpoint_callback, early_stopping])
+    early_stopping = EarlyStopping(monitor="va_elbo", patience=15, mode="min")
+    trainer = pl.Trainer(max_epochs=200, logger=[tb_logger, csv_logger],
+                         callbacks=[checkpoint_callback, early_stopping], devices=1)
     train_loader = DataLoader(train_dataset, num_workers=5, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=True,
                               persistent_workers=True, prefetch_factor=5, drop_last=True)
     valid_loader = DataLoader(valid_dataset, num_workers=5, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=False,
-                              persistent_workers=True, prefetch_factor=5, drop_last=True)
+                              persistent_workers=True, prefetch_factor=5, drop_last=False)
     trainer.fit(model, train_loader, valid_loader)

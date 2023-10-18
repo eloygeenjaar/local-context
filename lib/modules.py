@@ -11,20 +11,31 @@ class EncoderLocal(nn.Module):
         super(EncoderLocal, self).__init__()
         self.input_size = input_size
         self.local_size = local_size
+        self.hidden_size = hidden_size
         self.window_size = window_size
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True)
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True,
+                          bidirectional=True)
         # Create encoder_net
-        lin_layers = [nn.Linear(hidden_size, hidden_size), nn.ReLU(inplace=True)] * num_layers
+        hidden_sizes = [(2 * hidden_size, hidden_size)] + [(hidden_size, hidden_size)] * (num_layers - 1)
+        lin_layers = [nn.Sequential(nn.Linear(in_s, out_s), nn.LeakyReLU(inplace=True))
+                      for (in_s, out_s) in hidden_sizes]
         self.mlp = nn.Sequential(*lin_layers)
         self.mu_layer = nn.Linear(hidden_size, self.local_size)
         self.lv_layer = nn.Linear(hidden_size, self.local_size)
 
-    def forward(self, x, mask=None, window_size=None):
+    def forward(self, x, mask=None, window_step=None):
         """Estimate the conditional posterior distribution of the local representation q(Z_l|X)"""
         zl_mean, zl_std, h_ts = [], [], []
-        for t in range(0, x.size(1) - window_size + 1, window_size):
-            h_t, h_T = self.gru(x[:, t:t + window_size, :])
-            features = self.mlp(h_T.squeeze(0))
+        if window_step is None:
+            window_step = self.window_size
+        # x_w is size: (batch_size, num_windows, input_size, window_size)
+        x_w = x.unfold(1, self.window_size, window_step)
+        # Permute to: (batch_size, num_windows, window_size, input_size)
+        x_w = x_w.permute(0, 1, 3, 2)
+        for t in range(x_w.size(1)):
+            h_t, h_T = self.gru(x_w[:, t])
+            h_T = torch.reshape(h_T.permute(1, 0, 2), (x.size(0), 2 * self.hidden_size))
+            features = self.mlp(h_T)
             zl_mean.append(self.mu_layer(features))
             zl_std.append(F.softplus(self.lv_layer(features)))
             h_ts.append(h_t)
@@ -34,32 +45,78 @@ class EncoderLocal(nn.Module):
         return h_t, D.Normal(zl_mean, zl_std)
 
 class EncoderGlobal(nn.Module):
-    def __init__(self, input_size, global_size, hidden_size, num_layers, window_size, num_windows_mask):
+    def __init__(self, input_size, global_size, hidden_size, num_layers):
         """Initializes the instance"""
         super(EncoderGlobal, self).__init__()
         self.global_size = global_size
         self.hidden_size = hidden_size
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True)
-        lin_layers = [nn.Linear(hidden_size, hidden_size), nn.ReLU(inplace=True)] * num_layers
+        self.gru = nn.GRU(input_size=input_size, hidden_size=2 * hidden_size, batch_first=True)
+        hidden_sizes = [(2 * hidden_size, hidden_size)] + [(hidden_size, hidden_size)] * (num_layers - 1)
+        lin_layers = [nn.Sequential(nn.Linear(in_s, out_s), nn.LeakyReLU(inplace=True))
+                      for (in_s, out_s) in hidden_sizes]
         self.mlp = nn.Sequential(*lin_layers)
-        self.window_size = window_size
-        self.num_windows_mask = num_windows_mask
         self.mu_layer = nn.Linear(hidden_size, self.global_size)
         self.lv_layer = nn.Linear(hidden_size, self.global_size)
 
-    def forward(self, x, training=False):
+    def forward(self, x):
         """Estimate the conditional posterior distribution of the global representation q(z_g|X)"""
-        x_mask = x.clone()
-        if training:
-            x_mask = x_mask.repeat(2, 1, 1)
-            num_windows = x.size(1) // self.window_size
-            window_ixs = torch.randint(low=0, high=(num_windows + 1), size=(x_mask.size(0), self.num_windows_mask, ),
-                                    device=x.device)
-            for i in range(window_ixs.size(0)):
-                for j in range(self.num_windows_mask):
-                    x_mask[i, window_ixs[i, j]:(window_ixs[i, j] + self.window_size)] = 0.
-        h_t, h_T = self.gru(x_mask)
+        h_t, h_T = self.gru(x)
         features = self.mlp(h_T.squeeze(0))
+        zg_mean = self.mu_layer(features)
+        zg_std = F.softplus(self.lv_layer(features))
+        return h_t, D.Normal(zg_mean, zg_std)
+
+class mEncoderGlobal(nn.Module):
+    def __init__(self, input_size, global_size, hidden_size, num_layers):
+        """Initializes the instance"""
+        super(mEncoderGlobal, self).__init__()
+        self.global_size = global_size
+        self.hidden_size = hidden_size
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=True)
+        hidden_sizes = [(2 * hidden_size, hidden_size)] + [(hidden_size, hidden_size)] * (num_layers - 1)
+        lin_layers = [nn.Sequential(nn.Linear(in_s, out_s), nn.LeakyReLU(inplace=True))
+                      for (in_s, out_s) in hidden_sizes]
+        self.mlp = nn.Sequential(*lin_layers)
+        self.mu_layer = nn.Linear(hidden_size, self.global_size)
+        self.lv_layer = nn.Linear(hidden_size, self.global_size)
+
+    def forward(self, x):
+        """Estimate the conditional posterior distribution of the global representation q(z_g|X)"""
+        h_t, h_T = self.gru(x)
+        features = self.mlp(h_t).mean(1)
+        zg_mean = self.mu_layer(features)
+        zg_std = F.softplus(self.lv_layer(features))
+        return h_t, D.Normal(zg_mean, zg_std)
+
+class ContmEncoderGlobal(nn.Module):
+    def __init__(self, input_size, global_size, hidden_size, num_layers, window_size, perc_mask):
+        """Initializes the instance"""
+        super(ContmEncoderGlobal, self).__init__()
+        self.global_size = global_size
+        self.hidden_size = hidden_size
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, batch_first=True, bidirectional=True)
+        hidden_sizes = [(2 * hidden_size, hidden_size)] + [(hidden_size, hidden_size)] * (num_layers - 1)
+        lin_layers = [nn.Sequential(nn.Linear(in_s, out_s), nn.LeakyReLU(inplace=True))
+                      for (in_s, out_s) in hidden_sizes]
+        self.mlp = nn.Sequential(*lin_layers)
+        self.mu_layer = nn.Linear(hidden_size, self.global_size)
+        self.lv_layer = nn.Linear(hidden_size, self.global_size)
+        self.perc_mask = perc_mask
+        self.window_size = window_size
+
+    def forward(self, x):
+        """Estimate the conditional posterior distribution of the global representation q(z_g|X)"""
+        batch_size, num_timesteps, _ = x.size()
+        num_windows = num_timesteps // self.window_size
+        num_masked = int(self.perc_mask * num_windows)
+        x_mask = x.clone()
+        for i in range(batch_size):
+            window_ixs = torch.randperm(num_windows, device=x.device)[:num_masked]
+            for ix in window_ixs:
+                x_mask[i, (self.window_size * ix):(self.window_size * (ix + 1))] = 0.
+        x = torch.cat((x, x_mask))
+        h_t, h_T = self.gru(x)
+        features = self.mlp(h_t).mean(1)
         zg_mean = self.mu_layer(features)
         zg_std = F.softplus(self.lv_layer(features))
         return h_t, D.Normal(zg_mean, zg_std)
@@ -75,17 +132,28 @@ class WindowDecoder(nn.Module):
         self.hidden_size = hidden_size
         # This had a BatchNorm
         self.embedding = nn.Sequential(*[
-            nn.Linear(local_size + global_size, hidden_size),
-            nn.Tanh()])
-        self.gru = nn.GRU(input_size=1, hidden_size=hidden_size, batch_first=True)
-        lin_layers = [nn.Linear(hidden_size, hidden_size), nn.ReLU(inplace=True)] * num_layers
+            #nn.LayerNorm(local_size + global_size),
+            #nn.Linear(local_size + global_size, 2 * (local_size + global_size)),
+            #nn.LeakyReLU(inplace=True),
+            #nn.Linear(2 * (local_size + global_size), local_size + global_size),
+            #nn.LeakyReLU(inplace=True),
+            nn.Linear(local_size + global_size, 8 * hidden_size)
+            ])
+        self.gru = nn.GRU(input_size=1, hidden_size=hidden_size * 8, batch_first=True)
+        hidden_sizes = [(local_size + global_size, hidden_size)] + [(hidden_size, hidden_size)] * (num_layers - 1)
+        lin_layers = [nn.Sequential(nn.Linear(in_s, out_s), nn.LeakyReLU(inplace=True))
+                      for (in_s, out_s) in hidden_sizes]
         self.mlp = nn.Sequential(*lin_layers)
+        self.factor_layer = nn.Linear(8 * hidden_size, local_size + global_size)
         self.mu_layer = nn.Linear(hidden_size, self.output_size)
 
     def forward(self, z_t, z_g, output_len):
         """Estimate the sample likelihood distribution conditioned on the local and global representations q(X|z_g, Z_l)"""
         batch_size, prior_len, _ = z_t.size()
-        z = torch.cat((z_t, z_g.unsqueeze(1).repeat(1, z_t.size(1), 1)), dim=-1)
+        if z_g is not None:
+            z = torch.cat((z_t, z_g.unsqueeze(1).repeat(1, z_t.size(1), 1)), dim=-1)
+        else:
+            z = z_t
         emb = self.embedding(z)
         recon_seq = []
         # For each window ...
@@ -95,6 +163,9 @@ class WindowDecoder(nn.Module):
             recon_seq.append(rnn_out)
         # Stitch windows together
         recon_seq = torch.cat(recon_seq, dim=1)
+        with torch.no_grad():
+            self.factor_layer.weight.data = F.normalize(self.factor_layer.weight.data, dim=1)
+        recon_seq = self.factor_layer(recon_seq)
         recon_seq = self.mlp(recon_seq)
         x_mean = self.mu_layer(recon_seq)
-        return D.Normal(x_mean, 0.1)
+        return x_mean
