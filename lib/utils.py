@@ -397,6 +397,7 @@ def embed_data(device, model, train_dataset, valid_dataset, test_dataset):
     for (i, batch) in enumerate(train_dataloader):
         x, mask, (y_local, y_global) = batch
         x = x.to(device, non_blocking=True)
+        mask = mask.to(device, non_blocking=True)
         with torch.no_grad():
             p_x_hat, local_dist, global_dist, z_t, z_g = model(x, mask, window_step=model.window_step)
         y_train.append(y_global.cpu())
@@ -411,6 +412,7 @@ def embed_data(device, model, train_dataset, valid_dataset, test_dataset):
     for (i, batch) in enumerate(valid_dataloader):
         x, mask, (y_local, y_global) = batch
         x = x.to(device, non_blocking=True)
+        mask = mask.to(device, non_blocking=True)
         with torch.no_grad():
             p_x_hat, local_dist, global_dist, z_t, z_g = model(x, mask, window_step=model.window_step)
         y_valid.append(y_global.cpu())
@@ -425,6 +427,7 @@ def embed_data(device, model, train_dataset, valid_dataset, test_dataset):
     for (i, batch) in enumerate(test_dataloader):
         x, mask, (y_local, y_global) = batch
         x = x.to(device, non_blocking=True)
+        mask = mask.to(device, non_blocking=True)
         with torch.no_grad():
             p_x_hat, local_dist, global_dist, z_t, z_g = model(x, mask, window_step=model.window_step)
         y_test.append(y_global.cpu())
@@ -438,6 +441,53 @@ def embed_data(device, model, train_dataset, valid_dataset, test_dataset):
     return ((x_train, x_tr_time, y_train),
             (x_valid, x_va_time, y_valid),
             (x_test, x_te_time, y_test))
+    
+def embed_global_data(device, model, train_dataset, valid_dataset, test_dataset):
+    train_dataloader = DataLoader(train_dataset, batch_size=8, shuffle=False,
+                            num_workers=5)
+    valid_dataloader = DataLoader(valid_dataset, batch_size=8, shuffle=False,
+                            num_workers=5)
+    test_dataloader = DataLoader(test_dataset, batch_size=8, shuffle=False,
+                            num_workers=5)
+    y_train, embedding_train = [], []
+    for (i, batch) in enumerate(train_dataloader):
+        x, mask, (y_local, y_global) = batch
+        x = x.to(device, non_blocking=True)
+        with torch.no_grad():
+            _, global_dist = model.global_encoder(x)
+        y_train.append(y_global.cpu())
+        embedding_train.append(global_dist.mean[:x.size(0)].cpu())
+
+    y_train = torch.cat(y_train, dim=0).numpy()
+    x_train = torch.cat(embedding_train, dim=0).numpy()
+
+    y_valid, embedding_valid = [], []
+    for (i, batch) in enumerate(valid_dataloader):
+        x, mask, (y_local, y_global) = batch
+        x = x.to(device, non_blocking=True)
+        with torch.no_grad():
+            _, global_dist = model.global_encoder(x)
+        y_valid.append(y_global.cpu())
+        embedding_valid.append(global_dist.mean[:x.size(0)].cpu())
+
+    y_valid = torch.cat(y_valid, dim=0).numpy()
+    x_valid = torch.cat(embedding_valid, dim=0).numpy()
+
+    y_test, embedding_test = [], []
+    for (i, batch) in enumerate(test_dataloader):
+        x, mask, (y_local, y_global) = batch
+        x = x.to(device, non_blocking=True)
+        with torch.no_grad():
+            _, global_dist = model.global_encoder(x)
+        y_test.append(y_global.cpu())
+        embedding_test.append(global_dist.mean[:x.size(0)].cpu())
+
+    y_test = torch.cat(y_test, dim=0).numpy()
+    x_test = torch.cat(embedding_test, dim=0).numpy()
+
+    return ((x_train, y_train),
+            (x_valid, y_valid),
+            (x_test, y_test))
 
 # Adapted from: https://github.com/googleinterns/local_global_ts_representation/blob/main/gl_rep/data_loaders.py
 def normalize_signals(signals, masks, inds):
@@ -499,7 +549,7 @@ def get_fbirn(seed, split_ix, n_splits):
         df['diagnosis'] = (df['diagnosis'] == 2)
         df.to_csv('./data/fbirn/data.csv')
     
-    skf = StratifiedKFold(n_splits=n_splits, random_state=seed, shuffle=True)
+    skf = StratifiedKFold(n_splits=n_splits, random_state=42, shuffle=True)
     for (i, (trainval_index, test_index)) in enumerate(skf.split(df['subjectID'], df['diagnosis'])):
         if i == split_ix:
             break

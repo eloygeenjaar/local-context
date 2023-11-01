@@ -145,6 +145,10 @@ class AirQuality(Dataset):
     def learning_rate(self):
         return 0.001
 
+    @property
+    def num_timesteps(self):
+        return 680
+
 class PhysioNet(Dataset):
     def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
         super().__init__()
@@ -347,11 +351,14 @@ class ICAfBIRN(Dataset):
     def __getitem__(self, ix):
         x = nb.load(self.df.loc[self.indices[ix], 'path']).get_fdata()[:150, comp_ix]
         # TR from: https://biobank.ctsu.ox.ac.uk/crystal/crystal/docs/brain_mri.pdf
+        #x = signal.clean(x, detrend=True,
+        #    standardize='zscore_sample', t_r=2.0,
+        #    low_pass=0.15, high_pass=0.01)
         x = signal.clean(x, detrend=True,
             standardize='zscore_sample', t_r=2.0,
-            low_pass=0.15, high_pass=0.01)
+            low_pass=None, high_pass=None)
         x = torch.from_numpy(x).float()
-        return x.view(x.size(0), -1).float(), self.mask, (0, self.df.loc[self.indices[ix], 'sz'])
+        return x.view(x.size(0), -1).float(), torch.Tensor([ix]).long(), (0, self.df.loc[self.indices[ix], 'sz'])
 
     @property
     def data_size(self):
@@ -371,4 +378,8 @@ class ICAfBIRN(Dataset):
 
     @property
     def learning_rate(self):
-        return 0.001
+        return 0.0005
+
+    @property
+    def num_timesteps(self):
+        return 150

@@ -9,6 +9,7 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
 from scipy.stats import pearsonr
 from lib.utils import get_default_config, embed_data
+plt.rcParams['font.size'] = 20
 
 config = get_default_config([''])
 data_module = importlib.import_module('lib.data')
@@ -57,14 +58,22 @@ if x.shape[-1] > 2:
     x_valid_tsne = x_tsne[train_subjects:-2]
     c_mean_tsne = x_tsne[-2]
     sz_mean_tsne = x_tsne[-1]
+else:
+    x_train_tsne = x[:train_subjects]
+    x_valid_tsne = x[train_subjects:]
+    c_mean_tsne = c_mean
+    sz_mean_tsne = sz_mean
 
 fig, ax = plt.subplots(1, 1, figsize=(10, 10))
-ax.scatter(x_train_tsne[y_train==1, 0], x_train_tsne[y_train==1, 1], alpha=0.25, color='r')
-ax.scatter(x_train_tsne[y_train==2, 0], x_train_tsne[y_train==2, 1], alpha=0.25, color='b')
-ax.scatter(x_valid_tsne[y_valid==1, 0], x_valid_tsne[y_valid==1, 1], alpha=0.25, color='r', marker='D')
-ax.scatter(x_valid_tsne[y_valid==2, 0], x_valid_tsne[y_valid==2, 1], alpha=0.25, color='b', marker='D')
-ax.scatter(c_mean_tsne[0], c_mean_tsne[1], color='k', s=50, alpha=1.0)
-ax.scatter(sz_mean_tsne[0], sz_mean_tsne[1], color='k', s=50, alpha=1.0)
+ax.scatter(x_train_tsne[y_train==1, 0], x_train_tsne[y_train==1, 1], alpha=0.25, color='r', s=100)
+ax.scatter(x_train_tsne[y_train==2, 0], x_train_tsne[y_train==2, 1], alpha=0.25, color='b', s=100)
+ax.scatter(x_valid_tsne[y_valid==1, 0], x_valid_tsne[y_valid==1, 1], alpha=0.25, color='r', marker='D', s=100)
+ax.scatter(x_valid_tsne[y_valid==2, 0], x_valid_tsne[y_valid==2, 1], alpha=0.25, color='b', marker='D', s=100)
+ax.legend(['Control', 'SZ'])
+#ax.scatter(c_mean_tsne[0], c_mean_tsne[1], color='k', s=50, alpha=1.0)
+#ax.scatter(sz_mean_tsne[0], sz_mean_tsne[1], color='k', s=50, alpha=1.0)
+ax.set_xlabel('Latent dimension 1')
+ax.set_ylabel('Latent dimension 2')
 plt.savefig('figures/global_visualization.png')
 plt.clf()
 plt.close(fig)
@@ -87,7 +96,7 @@ plt.savefig('figures/clustering_scores.png')
 plt.clf()
 plt.close(fig)
 
-num_clusters = 6
+num_clusters = 4
 
 if x_tr_time.shape[-1] > 2:
     tsne = PCA(n_components=2)
@@ -99,8 +108,13 @@ if x_tr_time.shape[-1] > 2:
     x_tr_time_tsne = np.reshape(x_tr_time_tsne, (train_subjects, num_timesteps, 2))
     x_va_time_tsne = x_time_tsne[(train_subjects * num_timesteps):-num_clusters]
     x_va_time_tsne = np.reshape(x_va_time_tsne, (valid_subjects, num_timesteps, 2))
-    clusters_tsne = x_tsne[-num_clusters:]
-
+    clusters_tsne = x_time_tsne[-num_clusters:]
+else:
+    train_subjects, num_timesteps, latent_dim = x_tr_time.shape
+    valid_subjects = x_va_time.shape[0]
+    x_tr_time_tsne = np.reshape(x_tr_time_flat, (train_subjects, num_timesteps, 2))
+    x_va_time_tsne = np.reshape(x_va_time_flat, (valid_subjects, num_timesteps, 2))
+    clusters_tsne = clusters[num_clusters - 2]
 
 fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
@@ -121,8 +135,9 @@ plt.savefig('figures/local_visualization.png')
 plt.clf()
 plt.close(fig)
 
+num_clusters_visualize = num_clusters
 local_clusters = clusters[num_clusters - 2]
-fig, ax = plt.subplots(3, num_clusters, figsize=((2 * num_clusters), 15))
+fig, ax = plt.subplots(2, num_clusters_visualize, figsize=((2 * num_clusters), 10))
 z_t = torch.from_numpy(local_clusters).float().to(device).unsqueeze(1)
 z_g_c = torch.from_numpy(c_mean).float().to(device).unsqueeze(0).repeat(num_clusters, 1)
 z_g_sz = torch.from_numpy(sz_mean).float().to(device).unsqueeze(0).repeat(num_clusters, 1)
@@ -130,7 +145,7 @@ with torch.no_grad():
     rec_c = model.decoder(z_t, z_g_c, output_len=model.window_size)
     rec_sz = model.decoder(z_t, z_g_sz, output_len=model.window_size)
 print(rec_c.size(), rec_sz.size())
-for cluster_ix in range(num_clusters):
+for cluster_ix in range(num_clusters_visualize):
     rec_c_np = rec_c[cluster_ix].cpu().numpy()
     rec_sz_np = rec_sz[cluster_ix].cpu().numpy()
     print(np.abs(rec_c_np - rec_sz_np).mean())
@@ -138,13 +153,15 @@ for cluster_ix in range(num_clusters):
     vminmax = np.array([np.abs(rec_c_np).max(), np.abs(rec_sz_np).max()]).max()
     ax[0, cluster_ix].imshow(rec_c_np.T, vmin=-vminmax, vmax=vminmax, cmap='jet')
     ax[1, cluster_ix].imshow(rec_sz_np.T, vmin=-vminmax, vmax=vminmax, cmap='jet')
-    ax[2, cluster_ix].imshow(diff.T, cmap='jet')
-    ax[2, cluster_ix].set_xlabel('Time ->')
+    #ax[2, cluster_ix].imshow(diff.T, cmap='jet')
+    ax[1, cluster_ix].set_xlabel('Time ->')
     ax[0, cluster_ix].set_title(f'Control brain state: {cluster_ix}')
     ax[1, cluster_ix].set_title(f'SZ brain state: {cluster_ix}')
-    ax[2, cluster_ix].set_title(f'Diff brain state: {cluster_ix}')
-ax[0, 0].set_ylabel('ICA components')
-ax[1, 0].set_ylabel('ICA components')
+    #ax[2, cluster_ix].set_title(f'Diff brain state: {cluster_ix}')
+#ax[0, 0].set_ylabel('ICA components')
+#ax[1, 0].set_ylabel('ICA components')
+ax[0, 0].set_ylabel('Brain variables')
+ax[1, 0].set_ylabel('Brain variables')
 plt.tight_layout()
 
 plt.savefig('figures/reconstruction.png')
