@@ -11,7 +11,7 @@ from torch import nn
 from pathlib import Path
 from torch.utils.data import DataLoader
 from sklearn.model_selection import StratifiedKFold, train_test_split
-
+import pickle
 
 def get_default_config(args):
     if len(args) > 1:
@@ -577,3 +577,11 @@ def get_icafbirn(seed):
     valid_df = df.loc[valid_index].copy()
     test_df = df.loc[test_index].copy()
     return train_df, valid_df, test_df
+
+def get_sprite(seed):
+    data = pickle.load(open('./data/sprite/data.pkl', 'rb'))
+    X_train, X_test, A_train, A_test = data['X_train'], data['X_test'], data['A_train'], data['A_test']
+    D_train, D_test = data['D_train'], data['D_test']
+    c_augs_train, c_augs_test = data['c_augs_train'], data['c_augs_test']
+    m_augs_train, m_augs_test = data['m_augs_train'], data['m_augs_test']
+    return X_train, X_test

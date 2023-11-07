@@ -10,7 +10,7 @@ from scipy.stats import pearsonr
 from .modules import (EncoderLocal, mEncoderGlobal,
                       WindowDecoder, EncoderGlobal,
                       ContmEncoderGlobal, TransformerEncoder,
-                      ContEncoderGlobal)
+                      ContEncoderGlobal, convEncoder, convDecoder)
 from sklearn.linear_model import LinearRegression
 from numbers import Number
 
@@ -43,6 +43,7 @@ class BaseModel(pl.LightningModule):
         raise NotImplementedError
 
     def elbo(self, x, mask):
+        #(9000, 8, 64, 64, 3)
         batch_size, num_timesteps, input_size = x.size()
         #mask = mask.view(batch_size, num_timesteps, -1)
 
@@ -127,15 +128,20 @@ class GLR(BaseModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.global_encoder = EncoderGlobal(self.input_size, self.global_size, 32, 3)
-        
+        self.conv_encoder = convEncoder(128, 3)
+        self.conv_decoder = convDecoder(32 + 256, 3)
     def forward(self, x, mask, window_step=None):
         batch_size, num_timesteps, _ = x.size()
-        h_l, global_dist = self.global_encoder(x)
-        h_g, local_dist = self.local_encoder(x, window_step=window_step)
+        print("133")
+        print(x.size())
+        conv_x = self.encoder_frame(x)
+        h_l, global_dist = self.global_encoder(conv_x)
+        h_g, local_dist = self.local_encoder(conv_x, window_step=window_step)
         z_t = self.dropout(local_dist.rsample())
         z_g = global_dist.rsample()
         x_hat_mean = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
         p_x_hat = D.Normal(x_hat_mean, 0.1)
+        p_x_hat = self.conv_decoder(p_x_hat)
         return p_x_hat, local_dist, global_dist, z_t, z_g
 
     def calc_cf_loss(self, x, x_hat_dist, pz_t, p_zg, z_t, z_g):
@@ -145,6 +151,20 @@ class GLR(BaseModel):
         _, pos_zg = self.global_encoder(cf_dist.rsample())
         cf_loss = (pos_zg.log_prob(z_g)-pos_zg.log_prob(z_g_2)).exp().mean(-1)
         return cf_loss
+
+    def encoder_frame(self, x): 
+        # input x is list of length Frames [batchsize, channels, size, size]
+        # convert it to [batchsize, frames, channels, size, size]
+        # x = torch.stack(x, dim=1)
+        # [batch_size, frames, channels, size, size] to [batch_size * frames, channels, size, size]
+        x_shape = x.shape
+        # (9000, 8, 64, 64, 3)
+
+        x = x.view(-1, 3, 64, 64)
+        x_embed = self.conv_encoder(x)[0]
+        # to [batch_size , frames, embed_dim]
+        return x_embed.view(x_shape[0], 8, -1) 
+
 
 class mGLR(GLR):
     def __init__(self, *args, **kwargs):
