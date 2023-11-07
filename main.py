@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-
+from lib.data import Sprite
 
 if __name__ == "__main__":
     torch.backends.cudnn.deterministic=True
@@ -38,10 +38,20 @@ if __name__ == "__main__":
     early_stopping = EarlyStopping(monitor="va_elbo", patience=20, mode="min")
     trainer = pl.Trainer(max_epochs=200, logger=[tb_logger, csv_logger],
                          callbacks=[checkpoint_callback, early_stopping], devices=1)
+
     train_loader = DataLoader(train_dataset, num_workers=5, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=True,
                               persistent_workers=True, prefetch_factor=5, drop_last=True)
+    i = 0
+    for data in train_loader:
+        print(data)
+        if i == 0:
+            break
+        i+=1
+
     valid_loader = DataLoader(valid_dataset, num_workers=5, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=False,
                               persistent_workers=True, prefetch_factor=5, drop_last=False)
+
+
     trainer.fit(model, train_loader, valid_loader)

@@ -4,10 +4,15 @@ import pandas as pd
 import nibabel as nb
 from tqdm import tqdm
 from nilearn import signal
+from scipy.interpolate import CubicSpline
 from torch.nn import functional as F
 from torch.utils.data import Dataset
-from lib.utils import get_airquality, get_physionet, get_fbirn, get_icaukbb, get_icafbirn
+from torch import distributions as D
+from lib.utils import get_airquality, get_physionet, get_fbirn, get_icaukbb, get_icafbirn, get_sprite
 from sklearn.model_selection import train_test_split
+import socket
+from scipy import misc
+
 
 comp_ix = [68, 52, 97, 98, 44,
 
@@ -69,6 +74,61 @@ class Simulation(Dataset):
 
     def __getitem__(self, ix):
         return self.X[ix], self.y[ix]
+
+
+class Sprite(object):
+    def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
+        super().__init__()
+        self.data_type = data_type
+        self.seed = seed
+        train_df, test_df = get_sprite(seed)
+
+        if data_type == 'train':
+            self.df = train_df.copy()
+            self.dropout_rate = 0.05
+            self.bern = D.Bernoulli(1 - self.dropout_rate)
+        elif data_type == 'valid':
+            self.df = test_df.copy()
+        else:
+            self.df = test_df.copy()
+        print("\n SHAPE \n")
+        print(self.df.shape)
+        self.mask = torch.ones((self.df.shape[0], 12288)).bool()
+        self.y = torch.ones(self.df.shape[0])
+
+    def __len__(self):
+        return self.df.shape[0]
+
+    def __getitem__(self, index):
+        data_ancher = self.df[index] # (8, 64, 64, 3)
+        print("\n SHAPE 2\n")
+        print(data_ancher.shape)
+        x = torch.from_numpy(data_ancher).float()
+        # return x.view(x.size(0), -1).float(), self.mask[index], self.y[index]
+        return x.float(), self.mask[index], self.y[index]
+
+    @property
+    def data_size(self):
+        return 12288
+
+    @property
+    def window_size(self):
+        return 5
+
+    @property
+    def mask_windows(self):
+        return 5
+
+    @property
+    def learning_rate(self):
+        return 0.001
+
+    @property
+    def num_timesteps(self):
+        return 8
+
+
+
 
 class AirQuality(Dataset):
     def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
@@ -277,6 +337,10 @@ class fBIRN(Dataset):
     def learning_rate(self):
         return 0.001
 
+    @property
+    def num_timesteps(self):
+        return 150
+
 class ICAUKBiobank(Dataset):
     def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
         super().__init__()
@@ -305,7 +369,7 @@ class ICAUKBiobank(Dataset):
             standardize='zscore_sample', t_r=0.735,
             low_pass=0.15, high_pass=0.01)
         x = torch.from_numpy(x).float()
-        return x.view(x.size(0), -1).float(), self.mask, (0, self.df.loc[self.indices[ix], 'sex'])
+        return x.view(x.size(0), -1).float(), self.mask, (0, self.df.loc[self.indices[ix], 'sex'] )
 
     @property
     def data_size(self):
@@ -327,8 +391,12 @@ class ICAUKBiobank(Dataset):
     def learning_rate(self):
         return 0.001
 
+    @property
+    def num_timesteps(self):
+        return 100
+
 class ICAfBIRN(Dataset):
-    def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
+    def __init__(self, data_type, normalization, seed, num_folds, fold_ix, window_step=20):
         super().__init__()
         self.data_type = data_type
         self.seed = seed
@@ -337,28 +405,65 @@ class ICAfBIRN(Dataset):
 
         if data_type == 'train':
             self.df = train_df.copy()
+            self.dropout_rate = 0.05
+            self.bern = D.Bernoulli(1 - self.dropout_rate)
         elif data_type == 'valid':
             self.df = valid_df.copy()
         else:
             self.df = test_df.copy()
-
         self.indices = self.df.index.values
-        self.mask = torch.ones((150, 53)).bool()
+        self.TR = 2.0
+        self.new_TR = 0.2
+        x = np.arange(150) * self.TR
+        new_x = np.arange(300 // self.new_TR) * self.new_TR
+        data_long, data, masks = [], [], []
+        for (ix, row) in self.df.iterrows():
+            data_subj = nb.load(row['path']).get_fdata(dtype=np.float32)[:150, comp_ix]
+            data_subj = signal.clean(data_subj, detrend=True,
+            standardize='zscore_sample', t_r=self.TR,
+            low_pass=0.10, high_pass=0.01)
+            new_data = []
+            for i in range(len(comp_ix)):
+                cs = CubicSpline(x, data_subj[:, i])
+                new_data.append(cs(new_x))
+            new_data = np.stack(new_data, axis=1)
+            data_long.append(new_data)
+            data.append(data_subj)
+            masks.append(np.isin(np.round(new_x, 2), np.round(x, 2)))
+        self.window_size_sec = 20.
+        self.window_size = int(self.window_size_sec // self.new_TR)
+        self.window_step = int(window_step // self.new_TR)
+        #self.data = torch.from_numpy(np.stack(data, axis=0)).float()
+        self.data_long = torch.from_numpy(np.stack(data_long, axis=0)).float()
+        print(self.data_long.size())
+        # (subjects, num_windows, input_size, window_size)
+        #self.data = self.data.unfold(1, int(32 // (self.TR // self.new_TR)), window_step)
+        self.data_long = self.data_long.unfold(1, self.window_size, self.window_step)
+        #num_subjects, num_windows, input_size, window_size = self.data.size()
+        #self.data = torch.reshape(self.data, (num_subjects * num_windows, input_size, window_size))
+        num_subjects, num_windows, input_size, window_size = self.data_long.size()
+        self.data_long = torch.reshape(self.data_long, (num_subjects * num_windows, input_size, window_size))
+        self.mask = torch.from_numpy(
+            np.repeat(np.stack(masks, axis=0)[..., np.newaxis],
+                      input_size, axis=-1)).bool()
+        print(self.mask.size(), self.data_long.size())
+        print(self.mask[0])
+        self.mask = self.mask.unfold(1, self.window_size, self.window_step)
+        self.mask = torch.reshape(self.mask, (num_subjects * num_windows, input_size, window_size))
+        print(self.mask.size())
 
     def __len__(self):
-        return self.df.shape[0]
+        return self.data_long.size(0)
 
     def __getitem__(self, ix):
-        x = nb.load(self.df.loc[self.indices[ix], 'path']).get_fdata()[:150, comp_ix]
+        #x = nb.load(self.df.loc[self.indices[ix], 'path']).get_fdata()[:150, comp_ix]
         # TR from: https://biobank.ctsu.ox.ac.uk/crystal/crystal/docs/brain_mri.pdf
         #x = signal.clean(x, detrend=True,
         #    standardize='zscore_sample', t_r=2.0,
         #    low_pass=0.15, high_pass=0.01)
-        x = signal.clean(x, detrend=True,
-            standardize='zscore_sample', t_r=2.0,
-            low_pass=None, high_pass=None)
-        x = torch.from_numpy(x).float()
-        return x.view(x.size(0), -1).float(), torch.Tensor([ix]).long(), (0, self.df.loc[self.indices[ix], 'sz'])
+        #x = self.data[ix]
+        x_long = self.data_long[ix]
+        return x_long, 0, self.mask[ix], (0, 1)#(0, self.df.loc[self.indices[ix], 'sz'])
 
     @property
     def data_size(self):
@@ -367,10 +472,6 @@ class ICAfBIRN(Dataset):
     @property
     def num_classes(self):
         return 2
-
-    @property
-    def window_size(self):
-        return 20
 
     @property
     def mask_windows(self):
