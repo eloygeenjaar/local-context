@@ -44,7 +44,10 @@ class BaseModel(pl.LightningModule):
 
     def elbo(self, x, mask):
         #(9000, 8, 64, 64, 3)
-        batch_size, num_timesteps, input_size = x.size()
+        batch_size = x.size()[0]
+        num_timesteps = x.size()[1]
+        input_size = np.prod(x.size()[2:])
+        # batch_size, num_timesteps, input_size = x.size()
         #mask = mask.view(batch_size, num_timesteps, -1)
 
         x_hat_dist, pz_t, p_zg, z_t, z_g = self.forward(x, mask, window_step=self.window_step)
@@ -131,7 +134,8 @@ class GLR(BaseModel):
         self.conv_encoder = convEncoder(128, 3)
         self.conv_decoder = convDecoder(32 + 256, 3)
     def forward(self, x, mask, window_step=None):
-        batch_size, num_timesteps, _ = x.size()
+        batch_size = x.size()[0]
+        num_timesteps = x.size()[1]
         print("133")
         print(x.size())
         conv_x = self.encoder_frame(x)
@@ -207,7 +211,8 @@ class VAE(BaseModel):
         self.local_size = self.local_size + self.global_size
     
     def forward(self, x, mask):
-        batch_size, num_timesteps, _ = x.size()
+        batch_size = x.size()[0]
+        num_timesteps = x.size()[1]
         h_g, local_dist = self.local_encoder(x, window_size=self.window_size)
         z_t = local_dist.rsample()
         x_hat_mean = self.decoder(z_t, None, output_len=self.window_size)
@@ -220,7 +225,8 @@ class TransGLR(BaseModel):
         self.global_encoder = TransformerEncoder(self.input_size, self.global_size, 32, 6, self.num_timesteps)
         
     def forward(self, x, mask, window_step=None):
-        batch_size, num_timesteps, _ = x.size()
+        batch_size = x.size()[0]
+        num_timesteps = x.size()[1]
         h_l, global_dist = self.global_encoder(x)
         h_g, local_dist = self.local_encoder(x, window_step=window_step)
         z_t = self.dropout(local_dist.rsample())
@@ -262,7 +268,8 @@ class GlobalGLR(BaseModel):
         
         
     def forward(self, x, mask, window_step=None):
-        batch_size, num_timesteps, _ = x.size()
+        batch_size = x.size()[0]
+        num_timesteps = x.size()[1]
         #global_embeddings = F.normalize(self.global_embeddings, p=2, dim=-1)[mask.squeeze(1)]
         u = F.one_hot(mask, num_classes=223).float().squeeze(1)
         global_embeddings = self.u_mlp(u)
