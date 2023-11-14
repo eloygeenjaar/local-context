@@ -91,8 +91,6 @@ class Sprite(object):
             self.df = test_df.copy()
         else:
             self.df = test_df.copy()
-        print("\n SHAPE \n")
-        print(self.df.shape)
         self.mask = torch.ones((self.df.shape[0], 12288)).bool()
         self.y = torch.ones(self.df.shape[0])
 
@@ -101,10 +99,10 @@ class Sprite(object):
 
     def __getitem__(self, index):
         data_ancher = self.df[index] # (8, 64, 64, 3)
-        print("\n SHAPE 2\n")
-        print(data_ancher.shape)
         x = torch.from_numpy(data_ancher).float()
         # return x.view(x.size(0), -1).float(), self.mask[index], self.y[index]
+        print("DATA GET ITEM")
+        print(x.float().shape)
         return x.float(), self.mask[index], self.y[index]
 
     @property

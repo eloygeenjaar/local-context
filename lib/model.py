@@ -43,6 +43,8 @@ class BaseModel(pl.LightningModule):
         raise NotImplementedError
 
     def elbo(self, x, mask):
+        print("ELBO")
+        print(x.shape)
         #(9000, 8, 64, 64, 3)
         batch_size = x.size()[0]
         num_timesteps = x.size()[1]
@@ -56,10 +58,15 @@ class BaseModel(pl.LightningModule):
         else:
             cf_loss = torch.zeros((1, ), device=x.device)
 
+        print("BEFORE PERMUTE -1 ")
+        print(x.shape)
+
         # x_w is size: (batch_size, num_windows, input_size, window_size)
         x_w = x.unfold(1, self.window_size, self.window_step)
         # Permute to: (batch_size, num_windows, window_size, input_size)
-        x_w = x_w.permute(0, 1, 3, 2)
+        print("BEFORE PERMUTE")
+        print(x_w.shape)
+        x_w = x_w.permute(0, 1, 5, 2, 3, 4)
         num_windows = x_w.size(1)
         x_w = torch.reshape(x_w, (batch_size, -1, input_size))
         nll = -x_hat_dist.log_prob(x_w)  # shape=(M*batch_size, time, dimensions)
@@ -96,8 +103,11 @@ class BaseModel(pl.LightningModule):
         raise NotImplementedError
 
     def training_step(self, batch, batch_ix):
+        print("TRAINING???")
         x, mask, y = batch
         opt = self.optimizers()
+        print("FIRST??")
+        print(x.shape)
         # Forward pass
         elbo, nll, kl_l, kl_g, cf, mse = self.elbo(x, mask)
         # Optimization
@@ -111,7 +121,11 @@ class BaseModel(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         # this is the validation loop
+        print("VALIDATION")
         x, mask, y = batch
+        print(x.shape)
+        #torch.Size([8, 8, 64, 64, 3])
+        print("NEXT")
         elbo, nll, kl_l, kl_g, cf, mse = self.elbo(x, mask)
         self.log_dict({"va_elbo": elbo, "va_nll": nll, "va_kl_l": kl_l, "va_kl_g": kl_g, "va_mse": mse, "va_cf": cf}, prog_bar=True, on_epoch=True,
                         logger=True)
@@ -136,16 +150,19 @@ class GLR(BaseModel):
     def forward(self, x, mask, window_step=None):
         batch_size = x.size()[0]
         num_timesteps = x.size()[1]
-        print("133")
-        print(x.size())
+        print("FIRST SHAPE")
+        print(x.shape)
+        # torch.Size([8, 8, 64, 64, 3])
         conv_x = self.encoder_frame(x)
+        print("SHAPE AFTER CONV ENCODE")
+        print(conv_x.shape)
         h_l, global_dist = self.global_encoder(conv_x)
         h_g, local_dist = self.local_encoder(conv_x, window_step=window_step)
         z_t = self.dropout(local_dist.rsample())
         z_g = global_dist.rsample()
         x_hat_mean = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
         p_x_hat = D.Normal(x_hat_mean, 0.1)
-        p_x_hat = self.conv_decoder(p_x_hat)
+        # p_x_hat = self.conv_decoder(p_x_hat)
         return p_x_hat, local_dist, global_dist, z_t, z_g
 
     def calc_cf_loss(self, x, x_hat_dist, pz_t, p_zg, z_t, z_g):
@@ -165,9 +182,36 @@ class GLR(BaseModel):
         # (9000, 8, 64, 64, 3)
 
         x = x.view(-1, 3, 64, 64)
+        print("SHAPE BEFORE CONV ENCODE")
+        print(x.shape)
         x_embed = self.conv_encoder(x)[0]
         # to [batch_size , frames, embed_dim]
         return x_embed.view(x_shape[0], 8, -1) 
+
+
+class GLR_Original(BaseModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.global_encoder = EncoderGlobal(self.input_size, self.global_size, 32, 3)
+        
+    def forward(self, x, mask, window_step=None):
+        batch_size, num_timesteps, _ = x.size()
+        h_l, global_dist = self.global_encoder(x)
+        h_g, local_dist = self.local_encoder(x, window_step=window_step)
+        z_t = self.dropout(local_dist.rsample())
+        z_g = global_dist.rsample()
+        x_hat_mean = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
+        p_x_hat = D.Normal(x_hat_mean, 0.1)
+        return p_x_hat, local_dist, global_dist, z_t, z_g
+
+    def calc_cf_loss(self, x, x_hat_dist, pz_t, p_zg, z_t, z_g):
+        z_g_2 = torch.randn(z_g.size(), device=x.device)
+        cf_mean = self.decoder(z_t, z_g_2, output_len=self.window_size)
+        cf_dist = D.Normal(cf_mean, 0.1)
+        _, pos_zg = self.global_encoder(cf_dist.rsample())
+        cf_loss = (pos_zg.log_prob(z_g)-pos_zg.log_prob(z_g_2)).exp().mean(-1)
+        return cf_loss
+
 
 
 class mGLR(GLR):

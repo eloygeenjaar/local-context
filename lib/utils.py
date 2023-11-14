@@ -584,4 +584,8 @@ def get_sprite(seed):
     D_train, D_test = data['D_train'], data['D_test']
     c_augs_train, c_augs_test = data['c_augs_train'], data['c_augs_test']
     m_augs_train, m_augs_test = data['m_augs_train'], data['m_augs_test']
+    print("TRAIN SHAPE")
+    print(X_train.shape)
+    print("TEST SHAPE")
+    print(X_test.shape)
     return X_train, X_test

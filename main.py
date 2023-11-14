@@ -26,9 +26,12 @@ if __name__ == "__main__":
     valid_dataset = dataset_type('valid', config['normalization'], config["seed"], config['num_folds'], config['fold_ix'])
     window_size, mask_windows, lr, num_timesteps = train_dataset.window_size, train_dataset.mask_windows, train_dataset.learning_rate, train_dataset.num_timesteps
     assert train_dataset.data_size == valid_dataset.data_size
-    config['input_size'] = train_dataset.data_size
+    # config['input_size'] = train_dataset.data_size
+    config['input_size'] = 128
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
+    print(config['input_size'])
+    print("INPUTT")
     model = model_type(config["input_size"], config["local_size"], config["global_size"], num_timesteps,
                        window_size=window_size, beta=config["beta"], gamma=config["gamma"],
                        mask_windows=mask_windows, lr=lr, seed=config['seed'])
@@ -42,12 +45,6 @@ if __name__ == "__main__":
     train_loader = DataLoader(train_dataset, num_workers=5, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=True,
                               persistent_workers=True, prefetch_factor=5, drop_last=True)
-    i = 0
-    for data in train_loader:
-        print(data)
-        if i == 0:
-            break
-        i+=1
 
     valid_loader = DataLoader(valid_dataset, num_workers=5, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=False,
