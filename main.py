@@ -26,8 +26,8 @@ if __name__ == "__main__":
     valid_dataset = dataset_type('valid', config['normalization'], config["seed"], config['num_folds'], config['fold_ix'])
     window_size, mask_windows, lr, num_timesteps = train_dataset.window_size, train_dataset.mask_windows, train_dataset.learning_rate, train_dataset.num_timesteps
     assert train_dataset.data_size == valid_dataset.data_size
-    # config['input_size'] = train_dataset.data_size
-    config['input_size'] = 128
+    config['input_size'] = train_dataset.data_size
+    #config['input_size'] = 128
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
     print(config['input_size'])

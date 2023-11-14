@@ -66,7 +66,7 @@ class BaseModel(pl.LightningModule):
         # Permute to: (batch_size, num_windows, window_size, input_size)
         print("BEFORE PERMUTE")
         print(x_w.shape)
-        x_w = x_w.permute(0, 1, 5, 2, 3, 4)
+        x_w = x_w.permute(0, 1, 3, 2)
         num_windows = x_w.size(1)
         x_w = torch.reshape(x_w, (batch_size, -1, input_size))
         nll = -x_hat_dist.log_prob(x_w)  # shape=(M*batch_size, time, dimensions)
@@ -105,6 +105,7 @@ class BaseModel(pl.LightningModule):
     def training_step(self, batch, batch_ix):
         print("TRAINING???")
         x, mask, y = batch
+        x = x.view(x.shape[0], x.shape[1], -1)
         opt = self.optimizers()
         print("FIRST??")
         print(x.shape)
@@ -116,13 +117,14 @@ class BaseModel(pl.LightningModule):
         #nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
         opt.step()
         self.anneal = min(1.0, self.anneal + 1/500)
-        self.log_dict({"tr_elbo": elbo, "tr_nll": nll, "tr_kl_l": kl_l, "tr_kl_g": kl_g, "tr_mse": mse, "tr_cf": cf}, prog_bar=True, on_epoch=True,
+        self.log_dict({"tr_elbo_step": elbo, "tr_nll_step": nll, "tr_kl_l_step": kl_l, "tr_kl_g_step": kl_g, "tr_mse_step": mse, "tr_cf_step": cf}, prog_bar=True, on_epoch=True,
                         logger=True)
 
     def validation_step(self, batch, batch_idx):
         # this is the validation loop
         print("VALIDATION")
         x, mask, y = batch
+        x = x.view(x.shape[0], x.shape[1], -1)
         print(x.shape)
         #torch.Size([8, 8, 64, 64, 3])
         print("NEXT")
@@ -153,11 +155,12 @@ class GLR(BaseModel):
         print("FIRST SHAPE")
         print(x.shape)
         # torch.Size([8, 8, 64, 64, 3])
-        conv_x = self.encoder_frame(x)
-        print("SHAPE AFTER CONV ENCODE")
-        print(conv_x.shape)
-        h_l, global_dist = self.global_encoder(conv_x)
-        h_g, local_dist = self.local_encoder(conv_x, window_step=window_step)
+        #conv_x = self.encoder_frame(x)
+        #print("SHAPE AFTER CONV ENCODE")
+        #print(conv_x.shape)
+        h_l, global_dist = self.global_encoder(x)
+        h_g, local_dist = self.local_encoder(x, window_step=window_step)
+
         z_t = self.dropout(local_dist.rsample())
         z_g = global_dist.rsample()
         x_hat_mean = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
