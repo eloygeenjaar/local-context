@@ -46,9 +46,6 @@ class BaseModel(pl.LightningModule):
         print("ELBO")
         print(x.shape)
         #(9000, 8, 64, 64, 3)
-        batch_size = x.size()[0]
-        num_timesteps = x.size()[1]
-        input_size = np.prod(x.size()[2:])
         # batch_size, num_timesteps, input_size = x.size()
         #mask = mask.view(batch_size, num_timesteps, -1)
 
@@ -58,6 +55,14 @@ class BaseModel(pl.LightningModule):
         else:
             cf_loss = torch.zeros((1, ), device=x.device)
 
+        x = self.encoder_frame(x)
+
+        batch_size = x.size()[0]
+        num_timesteps = x.size()[1]
+        input_size = np.prod(x.size()[2:])
+        print(batch_size)
+        print(num_timesteps)
+        print(input_size)
         print("BEFORE PERMUTE -1 ")
         print(x.shape)
 
@@ -66,7 +71,7 @@ class BaseModel(pl.LightningModule):
         # Permute to: (batch_size, num_windows, window_size, input_size)
         print("BEFORE PERMUTE")
         print(x_w.shape)
-        x_w = x_w.permute(0, 1, 5, 2, 3, 4)
+        x_w = x_w.permute(0, 1, 3, 2)
         num_windows = x_w.size(1)
         x_w = torch.reshape(x_w, (batch_size, -1, input_size))
         nll = -x_hat_dist.log_prob(x_w)  # shape=(M*batch_size, time, dimensions)
@@ -116,9 +121,7 @@ class BaseModel(pl.LightningModule):
         #nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
         opt.step()
         self.anneal = min(1.0, self.anneal + 1/500)
-        self.log_dict({"tr_elbo": elbo, "tr_nll": nll, "tr_kl_l": kl_l, "tr_kl_g": kl_g, "tr_mse": mse, "tr_cf": cf}, prog_bar=True, on_epoch=True,
-                        logger=True)
-
+        self.log_dict({"tr_elbo": elbo, "tr_nll": nll, "tr_kl_l": kl_l, "tr_kl_g": kl_g, "tr_mse": mse, "tr_cf": cf}, prog_bar=True, on_epoch=True, logger=True)
     def validation_step(self, batch, batch_idx):
         # this is the validation loop
         print("VALIDATION")
@@ -139,6 +142,21 @@ class BaseModel(pl.LightningModule):
         sch = self.lr_schedulers()
         if "va_elbo" in self.trainer.callback_metrics:
             sch.step(self.trainer.callback_metrics["va_elbo"])
+
+    def encoder_frame(self, x): 
+        # input x is list of length Frames [batchsize, channels, size, size]
+        # convert it to [batchsize, frames, channels, size, size]
+        # x = torch.stack(x, dim=1)
+        # [batch_size, frames, channels, size, size] to [batch_size * frames, channels, size, size]
+        x_shape = x.shape
+        # (9000, 8, 64, 64, 3)
+
+        x = x.view(-1, 3, 64, 64)
+        print("SHAPE BEFORE CONV ENCODE")
+        print(x.shape)
+        x_embed = self.conv_encoder(x)[0]
+        # to [batch_size , frames, embed_dim]
+        return x_embed.view(x_shape[0], 8, -1) 
 
 
 class GLR(BaseModel):
@@ -161,6 +179,11 @@ class GLR(BaseModel):
         z_t = self.dropout(local_dist.rsample())
         z_g = global_dist.rsample()
         x_hat_mean = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
+        print("BEFORE NORMAL DIST")
+        print(x_hat_mean.shape)
+
+        #Should probably conv decode somewhere here
+
         p_x_hat = D.Normal(x_hat_mean, 0.1)
         # p_x_hat = self.conv_decoder(p_x_hat)
         return p_x_hat, local_dist, global_dist, z_t, z_g
@@ -173,20 +196,6 @@ class GLR(BaseModel):
         cf_loss = (pos_zg.log_prob(z_g)-pos_zg.log_prob(z_g_2)).exp().mean(-1)
         return cf_loss
 
-    def encoder_frame(self, x): 
-        # input x is list of length Frames [batchsize, channels, size, size]
-        # convert it to [batchsize, frames, channels, size, size]
-        # x = torch.stack(x, dim=1)
-        # [batch_size, frames, channels, size, size] to [batch_size * frames, channels, size, size]
-        x_shape = x.shape
-        # (9000, 8, 64, 64, 3)
-
-        x = x.view(-1, 3, 64, 64)
-        print("SHAPE BEFORE CONV ENCODE")
-        print(x.shape)
-        x_embed = self.conv_encoder(x)[0]
-        # to [batch_size , frames, embed_dim]
-        return x_embed.view(x_shape[0], 8, -1) 
 
 
 class GLR_Original(BaseModel):
