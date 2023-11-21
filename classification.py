@@ -18,15 +18,15 @@ from lib.utils import get_default_config, embed_global_data
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 config = get_default_config([''])
 seeds = [42, 1337, 9999, 1111, 1234]
-models = ['TransGLR']
+models = ['GlobalLRRNN']
 datasets = ['ICAfBIRN']
-gammas = [0.0]
+sizes = [8, 16, 32]
 normalizations = ['individual']
 results = np.zeros((len(seeds),
                     len(normalizations),
                     len(datasets),
                     len(models),
-                    len(gammas)))
+                    len(sizes)))
 config = config.copy()
 for (s_ix, seed) in enumerate(seeds):
     config['seed'] = seed
@@ -35,10 +35,11 @@ for (s_ix, seed) in enumerate(seeds):
     for (n_ix, normalization) in enumerate(normalizations):
         for (m_ix, model_name) in enumerate(models):
             for (d_ix, dataset) in enumerate(datasets):
-                for (g_ix, gamma) in enumerate(gammas):
-                    config['batch_size'] = 8
+                for (s_ix, size) in enumerate(sizes):
+                    config['batch_size'] = 4
                     config['normalization'] = normalization
-                    config['gamma'] = gamma
+                    config['local_size'] = size
+                    config['global_size'] = 8
                     config['model'] = model_name
                     config['dataset'] = dataset
                     version = f'm{config["model"]}_d{config["dataset"]}_g{config["gamma"]}_s{config["seed"]}_n{config["normalization"]}_s{config["local_size"]}_g{config["global_size"]}_f{config["fold_ix"]}'
@@ -70,12 +71,12 @@ for (s_ix, seed) in enumerate(seeds):
                         lr = LogisticRegression(max_iter=1000)
                         lr.fit(x_train, y_train)
                         print('-- results --')
-                        print(seed, model_name, dataset, gamma)
+                        print(seed, model_name, dataset, size)
                         print(lr.score(x_train, y_train))
                         acc = lr.score(x_valid, y_valid)
                         print(acc)
                         
-                        results[s_ix, n_ix, d_ix, m_ix, g_ix] = acc
+                        results[s_ix, n_ix, d_ix, m_ix, s_ix] = acc
                         del lr
                         #del scaler
 

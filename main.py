@@ -34,9 +34,9 @@ if __name__ == "__main__":
                        mask_windows=mask_windows, lr=lr, seed=config['seed'])
     tb_logger = TensorBoardLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
     csv_logger = CSVLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
-    checkpoint_callback = ModelCheckpoint(filename="best", save_last=False, monitor="va_elbo")
-    early_stopping = EarlyStopping(monitor="va_elbo", patience=20, mode="min")
-    trainer = pl.Trainer(max_epochs=200, logger=[tb_logger, csv_logger],
+    checkpoint_callback = ModelCheckpoint(filename="best", save_last=False, monitor="va_loss")
+    early_stopping = EarlyStopping(monitor="va_loss", patience=50, mode="min")
+    trainer = pl.Trainer(max_epochs=1000, logger=[tb_logger, csv_logger],
                          callbacks=[checkpoint_callback, early_stopping], devices=1)
     train_loader = DataLoader(train_dataset, num_workers=5, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=True,

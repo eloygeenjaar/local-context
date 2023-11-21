@@ -7,12 +7,18 @@ from torch import distributions as D
 from torch.nn import functional as F
 from scipy.stats import pearsonr
 # Import all kernel functions
-from .modules import (EncoderLocal, mEncoderGlobal,
+from .modules import (EncoderLocal,
                       WindowDecoder, EncoderGlobal,
-                      ContmEncoderGlobal, TransformerEncoder,
-                      ContEncoderGlobal)
+                      TransformerEncoder)
+from .conv import EncoderLocalConv, WindowDecoderConv, GlobalConv, LayeredConv
+from .lin import (EncoderLocalLin, WindowDecoderLin,
+                  EncoderLocalFull, WindowDecoderFull)
+from .rnn import (
+    EncoderLocalRNN, WindowDecoderRNN, mEncoderGlobal
+)
 from sklearn.linear_model import LinearRegression
 from numbers import Number
+from .utils import mask_input, mask_input_extra
 
 
 
@@ -20,21 +26,24 @@ class BaseModel(pl.LightningModule):
     def __init__(self, input_size, local_size, global_size, num_timesteps, window_size=20,
                  beta=1., gamma=1., mask_windows=0, lr=0.001, seed=42, local_dropout=0.0):
         super().__init__()
-        self.window_step = 1
         self.num_timesteps = num_timesteps
         self.dropout = nn.Dropout(local_dropout)
         self.local_size = local_size
         self.global_size = global_size
-        self.local_encoder = EncoderLocal(input_size, local_size, window_size, 32, 3)
         self.input_size = input_size
         self.window_size = window_size
         self.mask_windows = mask_windows
         self.lr = lr
         self.seed = seed
-        self.decoder = WindowDecoder(input_size, local_size, global_size, window_size, 32, 4)
+        self.transition_mat = nn.Linear(self.local_size, self.local_size)
         self.beta = beta
         self.gamma = gamma
-        self.anneal = 0.0
+        self.dropout_rate = 0.0
+        self.anneal = 0.
+        # Visible values
+        self.mask_v = D.Bernoulli(0.95)
+        # Interpolated values
+        self.mask_i = D.Bernoulli(0.95)
         # Lightning parameters
         self.automatic_optimization = False
         self.save_hyperparameters()
@@ -42,219 +51,247 @@ class BaseModel(pl.LightningModule):
     def forward(self, x, mask, window_step=None):
         raise NotImplementedError
 
-    def elbo(self, x, mask):
-        batch_size, num_timesteps, input_size = x.size()
-        #mask = mask.view(batch_size, num_timesteps, -1)
-
-        x_hat_dist, pz_t, p_zg, z_t, z_g = self.forward(x, mask, window_step=self.window_step)
-        if self.gamma!=0:
-            cf_loss = self.calc_cf_loss(x, x_hat_dist, pz_t, p_zg, z_t, z_g)
+    def elbo(self, x, x_full, validation=False):
+        model_output = self.forward(x, x_full)
+        mse = F.mse_loss(model_output['x_hat'], x, reduction='none').mean(dim=(0, 2, 3))
+        kl_l = D.kl.kl_divergence(model_output['p_zt'], D.Normal(0., 1.)).mean(dim=(1, 2))
+        if model_output['p_zg'] is not None:
+            kl_g = D.kl.kl_divergence(p_zg, D.Normal(0., 1.)).mean(dim=(1))
         else:
-            cf_loss = torch.zeros((1, ), device=x.device)
-
-        # x_w is size: (batch_size, num_windows, input_size, window_size)
-        x_w = x.unfold(1, self.window_size, self.window_step)
-        # Permute to: (batch_size, num_windows, window_size, input_size)
-        x_w = x_w.permute(0, 1, 3, 2)
-        num_windows = x_w.size(1)
-        x_w = torch.reshape(x_w, (batch_size, -1, input_size))
-        nll = -x_hat_dist.log_prob(x_w)  # shape=(M*batch_size, time, dimensions)
-        # Prior is previous timestep -> smoothness
-        pz = D.Normal(pz_t.mean[:, :-1], pz_t.stddev[:, :-1])
-        pz_t = D.Normal(pz_t.mean[:, 1:], pz_t.stddev[:, 1:])
-        kl_l = D.kl.kl_divergence(pz_t, pz) #/ (x.size(1) // self.window_size)
-        #kl_l = kl_l.sum(1).mean(-1)  # shape=(M*batch_size, time, dimensions)
-        kl_l = kl_l.mean(dim=(1, 2))
-        # I use the inverse of the original mask
-        #nll = torch.where(mask==0, torch.zeros_like(nll), nll)
-
-        nll = nll.mean(dim=(1, 2))
-        if p_zg is not None:
-            p_zg = D.Normal(p_zg.mean[:batch_size], p_zg.stddev[:batch_size])
-            kl_g = D.kl.kl_divergence(p_zg, D.Normal(loc=0, scale=1.)).sum(-1)
-        else:
-            kl_g = torch.zeros((1,), device=x.device)
+            kl_g = torch.zeros((1, ), device=x.device)
         if self.training:
-            elbo = (-nll - self.anneal * self.beta * (kl_l + 0.0 * kl_g) 
-                    - self.anneal * self.gamma * cf_loss).mean()  # shape=(M*batch_size)
+            loss = (mse + self.anneal * self.beta * (kl_l + 0.1 * kl_g)).mean(0)
         else:
-            elbo = (-nll - self.beta * (kl_l + 0.0 * kl_g) 
-                    - self.gamma * cf_loss).mean()  # shape=(M*batch_size)
-
-        #measured_ratio = mask.float().mean(dim=(1, 2))
-        #kl_l = kl_l * measured_ratio
-
-        mse = F.mse_loss(x_hat_dist.mean, x_w).detach()
+            loss = (mse + self.beta * (kl_l + 0.1 * kl_g)).mean(0)
         
-        return -elbo, nll.mean(), kl_l.mean(), kl_g.mean(), cf_loss.mean(), mse.mean()
-
-    def calc_cf_loss(self, x, x_hat_dist, pz_t, p_zg, z_t, z_g):
-        raise NotImplementedError
+        #loss = mse
+        return (loss, mse.detach().mean(), torch.zeros((1, )), torch.zeros((1, )),
+                kl_l.detach().mean(), kl_g.detach().mean())
 
     def training_step(self, batch, batch_ix):
-        x, mask, y = batch
+        x, task_mask, mask, y = batch
+        #x_masked = mask_input_extra(x, task_mask)
+        x_masked = x.unfold(1, 32, 2).permute(0, 1, 3, 2)
+        x_masked = x_masked.float()
         opt = self.optimizers()
-        # Forward pass
-        elbo, nll, kl_l, kl_g, cf, mse = self.elbo(x, mask)
+        # Forward passWindowDecoderFull
+        loss, mse, mse_swap_t, mse_swap_s, kl_l, kl_g = self.elbo(x_masked, x.float())
         # Optimization
         opt.zero_grad()
-        self.manual_backward(elbo)
-        #nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
+        self.manual_backward(loss)
         opt.step()
-        self.anneal = min(1.0, self.anneal + 1/500)
-        self.log_dict({"tr_elbo": elbo, "tr_nll": nll, "tr_kl_l": kl_l, "tr_kl_g": kl_g, "tr_mse": mse, "tr_cf": cf}, prog_bar=True, on_epoch=True,
+        self.anneal = min(1.0, self.anneal + 1/5000)
+        self.log_dict({"tr_loss": loss, "tr_mse": mse, "tr_kll": kl_l, "tr_klg": kl_g, "tr_swap_t": mse_swap_t, "tr_swap_s": mse_swap_s}, prog_bar=True, on_epoch=True,
                         logger=True)
 
     def validation_step(self, batch, batch_idx):
-        # this is the validation loop
-        x, mask, y = batch
-        elbo, nll, kl_l, kl_g, cf, mse = self.elbo(x, mask)
-        self.log_dict({"va_elbo": elbo, "va_nll": nll, "va_kl_l": kl_l, "va_kl_g": kl_g, "va_mse": mse, "va_cf": cf}, prog_bar=True, on_epoch=True,
+        x, task_mask, mask, y = batch
+        x_masked = x.unfold(1, 32, 2).permute(0, 1, 3, 2)
+        x_masked = x_masked.float()
+        opt = self.optimizers()
+        # Forward passWindowDecoderFull
+        loss, mse, mse_swap_t, mse_swap_s, kl_l, kl_g = self.elbo(x_masked, x.float())
+        self.log_dict({"va_loss": loss, "va_mse": mse, "va_kll": kl_l, "va_klg": kl_g, "va_swap_t": mse_swap_t, "va_swap_s": mse_swap_s}, prog_bar=True, on_epoch=True,
                         logger=True)
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.90, patience=5, verbose=True)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.90, patience=10, verbose=True)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
     def on_validation_epoch_end(self):
         sch = self.lr_schedulers()
-        if "va_elbo" in self.trainer.callback_metrics:
-            sch.step(self.trainer.callback_metrics["va_elbo"])
+        if "va_loss" in self.trainer.callback_metrics:
+            sch.step(self.trainer.callback_metrics["va_loss"])
 
-
-class GLR(BaseModel):
+class LR(BaseModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.global_encoder = EncoderGlobal(self.input_size, self.global_size, 32, 3)
+        #self.local_encoder = EncoderLocalConv(self.input_size, self.local_size, self.window_size, 128, 3)
+        #self.decoder = WindowDecoderConv(self.input_size, self.local_size, 0, self.window_size, 128, 3)
+        self.local_encoder = EncoderLocalRNN(self.input_size, self.local_size, self.window_size, 128, 3)
+        self.decoder = WindowDecoderRNN(self.input_size, self.local_size, 0, self.window_size, 128, 3)
         
     def forward(self, x, mask, window_step=None):
-        batch_size, num_timesteps, _ = x.size()
-        h_l, global_dist = self.global_encoder(x)
-        h_g, local_dist = self.local_encoder(x, window_step=window_step)
-        z_t = self.dropout(local_dist.rsample())
-        z_g = global_dist.rsample()
-        x_hat_mean = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
-        p_x_hat = D.Normal(x_hat_mean, 0.1)
-        return p_x_hat, local_dist, global_dist, z_t, z_g
-
-    def calc_cf_loss(self, x, x_hat_dist, pz_t, p_zg, z_t, z_g):
-        z_g_2 = torch.randn(z_g.size(), device=x.device)
-        cf_mean = self.decoder(z_t, z_g_2, output_len=self.window_size)
-        cf_dist = D.Normal(cf_mean, 0.1)
-        _, pos_zg = self.global_encoder(cf_dist.rsample())
-        cf_loss = (pos_zg.log_prob(z_g)-pos_zg.log_prob(z_g_2)).exp().mean(-1)
-        return cf_loss
-
-class mGLR(GLR):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.global_encoder = mEncoderGlobal(self.input_size, self.global_size, 32, 3)
-
-class ContGLR(GLR):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.global_encoder = ContEncoderGlobal(self.input_size, self.global_size, 32, 3, self.window_size, 0.3)
-
-    def calc_cf_loss(self, x, x_hat_dist, pz_t, p_zg, z_t, z_g):
-        batch_size = x.size(0)
-        anchor = D.Normal(p_zg.mean[:batch_size], p_zg.stddev[:batch_size])
-        pos = D.Normal(p_zg.mean[batch_size:], p_zg.stddev[batch_size:])
-        anchor_ix, neg_ix = torch.triu_indices(batch_size, batch_size, device=x.device)
-        anchor_neg = D.Normal(p_zg.mean[anchor_ix], p_zg.stddev[anchor_ix])
-        neg = D.Normal(p_zg.mean[neg_ix], p_zg.stddev[neg_ix])
-        return self.triplet_loss(anchor, pos, anchor_neg, neg)
-    
-    @staticmethod
-    def wasserstein_dist(dist_a, dist_b):
-        m_dist = (dist_a.mean - dist_b.mean).pow(2).sum(-1)
-        s_dist = torch.norm(dist_a.stddev - dist_b.stddev, dim=-1).pow(2)
-        return m_dist + s_dist
-    
-    def triplet_loss(self, anchor_pos, pos, anchor_neg, neg, margin=1.0):
-        return torch.max(
-            self.wasserstein_dist(anchor_pos, pos).mean(0) -
-            self.wasserstein_dist(anchor_neg, neg).mean(0) + margin,
-            torch.zeros((1, ), device=pos.mean.device))[0]
-
-class VAE(BaseModel):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.local_encoder = EncoderLocal(
-            self.input_size,
-            self.local_size + self.global_size,
-            self.window_size, 64, 3)
-        self.local_size = self.local_size + self.global_size
-    
-    def forward(self, x, mask):
-        batch_size, num_timesteps, _ = x.size()
-        h_g, local_dist = self.local_encoder(x, window_size=self.window_size)
+        local_dist = self.local_encoder(x, mask=mask)
         z_t = local_dist.rsample()
-        x_hat_mean = self.decoder(z_t, None, output_len=self.window_size)
-        p_x_hat = D.Normal(x_hat_mean, 0.1)
-        return p_x_hat, local_dist, None, z_t, None
+        x_hat = self.decoder(z_t, None, output_len=self.window_size)
+        return {
+            'x_hat': x_hat,
+            'x_hat_swap_t': None,
+            'x_hat_swap_s': None,
+            'p_zt': local_dist,
+            'p_zg': None,
+            'l2_t': torch.zeros((1,), device=x.device),
+            'l2_g': torch.zeros((1,), device=x.device)}
 
-class TransGLR(BaseModel):
+class LRConv(BaseModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.global_encoder = TransformerEncoder(self.input_size, self.global_size, 32, 6, self.num_timesteps)
+        self.local_encoder = EncoderLocalConv(self.input_size, self.local_size, self.window_size, 128, 3)
+        self.decoder = WindowDecoderConv(self.input_size, self.local_size, 0, self.window_size, 128, 3)
         
     def forward(self, x, mask, window_step=None):
-        batch_size, num_timesteps, _ = x.size()
-        h_l, global_dist = self.global_encoder(x)
-        h_g, local_dist = self.local_encoder(x, window_step=window_step)
-        z_t = self.dropout(local_dist.rsample())
+        local_dist = self.local_encoder(x, mask=mask)
+        z_t = local_dist.rsample()
+        x_hat = self.decoder(z_t, None, output_len=self.window_size)
+        return {
+            'x_hat': x_hat,
+            'x_hat_swap_t': None,
+            'x_hat_swap_s': None,
+            'p_zt': local_dist,
+            'p_zg': None,
+            'l2_t': torch.zeros((1,), device=x.device),
+            'l2_g': torch.zeros((1,), device=x.device)}
+
+class LRLin(BaseModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.local_encoder = EncoderLocalLin(self.input_size, self.local_size, self.window_size, 128, 3)
+        self.decoder = WindowDecoderLin(self.input_size, self.local_size, self.global_size, self.window_size, 128, 3)
+        
+    def forward(self, x, mask, window_step=None):
+        local_dist = self.local_encoder(x, mask=mask)
+        z_t = local_dist.rsample()
+        x_hat = self.decoder(z_t, output_len=self.window_size)
+        return x_hat, local_dist
+
+class LRFull(BaseModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.local_encoder = EncoderLocalFull(self.input_size, self.local_size, self.window_size, 128, 3)
+        self.decoder = WindowDecoderFull(self.input_size, self.local_size, self.global_size, self.window_size, 128, 3)
+        
+    def forward(self, x, mask, window_step=None):
+        local_dist = self.local_encoder(x, mask=mask)
+        z_t = local_dist.rsample()
+        x_hat = self.decoder(z_t, output_len=self.window_size)
+        return x_hat, local_dist
+
+class LRRNN(BaseModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.local_encoder = EncoderLocalRNN(self.input_size, self.local_size, self.window_size, 128, 3)
+        self.decoder = WindowDecoderRNN(self.input_size, self.local_size, self.global_size, self.window_size, 128, 3)
+        
+    def forward(self, x, mask, window_step=None):
+        local_dist = self.local_encoder(x)
+        z_t = local_dist.rsample()
+        x_hat = self.decoder(z_t, None, output_len=self.window_size)
+        return x_hat, local_dist, None
+
+
+class GlobalLRRNN(BaseModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.local_encoder = EncoderLocalRNN(self.input_size, self.local_size, self.window_size, 128, 3)
+        self.global_encoder = TransformerEncoder(self.input_size, self.global_size, 64, 8, self.num_timesteps)
+        self.decoder = WindowDecoderRNN(self.input_size, self.local_size, self.global_size, self.window_size, 128, 3)
+        
+    def forward(self, x, x_full, window_step=None):
+        local_dist = self.local_encoder(x)
+        global_dist = self.global_encoder(x_full)
+        z_t = local_dist.rsample()
         z_g = global_dist.rsample()
-        x_hat_mean = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
-        p_x_hat = D.Normal(x_hat_mean, 0.1)
-        return p_x_hat, local_dist, global_dist, z_t, z_g
+        x_hat = self.decoder(z_t, z_g, output_len=self.window_size)
+        return x_hat, local_dist, global_dist
 
-    def calc_cf_loss(self, x, x_hat_dist, pz_t, p_zg, z_t, z_g):
-        batch_size = x.size(0)
-        anchor = D.Normal(p_zg.mean[:batch_size], p_zg.stddev[:batch_size])
-        pos = D.Normal(p_zg.mean[batch_size:], p_zg.stddev[batch_size:])
-        anchor_ix, neg_ix = torch.triu_indices(batch_size, batch_size, device=x.device)
-        anchor_neg = D.Normal(p_zg.mean[anchor_ix], p_zg.stddev[anchor_ix])
-        neg = D.Normal(p_zg.mean[neg_ix], p_zg.stddev[neg_ix])
-        return self.triplet_loss(anchor, pos, anchor_neg, neg)
-    
-    @staticmethod
-    def wasserstein_dist(dist_a, dist_b):
-        m_dist = (dist_a.mean - dist_b.mean).pow(2).sum(-1)
-        s_dist = torch.norm(dist_a.stddev - dist_b.stddev, dim=-1).pow(2)
-        return m_dist + s_dist
-    
-    def triplet_loss(self, anchor_pos, pos, anchor_neg, neg, margin=1.0):
-        return torch.max(
-            self.wasserstein_dist(anchor_pos, pos).mean(0) -
-            self.wasserstein_dist(anchor_neg, neg).mean(0) + margin,
-            torch.zeros((1, ), device=pos.mean.device))[0]
-
-class GlobalGLR(BaseModel):
+class SwapGlobalLRRNN(BaseModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.u_mlp = nn.Sequential(
-            nn.Linear(223, 32),
-            nn.Tanh(),
-            nn.Linear(32, 2),
-            nn.Tanh()
-        )
+        self.local_encoder = EncoderLocalRNN(self.input_size, self.local_size, self.window_size, 128, 3)
+        #self.global_encoder = TransformerEncoder(self.input_size, self.global_size, 64, 8, self.num_timesteps)
+        self.global_encoder = mEncoderGlobal(self.input_size, self.global_size, 256, 3)
+        self.decoder = WindowDecoderRNN(self.input_size, self.local_size, self.global_size, self.window_size, 128, 3)
+        self.shared = self.local_size // 2
         
+    def forward(self, x, x_full, window_step=None):
+        #batch_size = x.size(1)
+        local_dist = self.local_encoder(x)
+        global_dist = self.global_encoder(x_full)
+        z_t = local_dist.rsample()
+        batch_size, num_windows, local_size = z_t.size()
+        z_g = global_dist.rsample()
+        x_hat = self.decoder(z_t, z_g, output_len=self.window_size)
+        # Swap current timestep with random other subjects (roll over batch)
+        z_t_swap = z_t.clone()
+        #z_t_swap = torch.roll(z_t, 1, 0).clone()
+        #z_t_swap[..., :self.shared] = z_t_swap[torch.randperm(batch_size), :, :self.shared]
+        z_t_swap = z_t_swap[torch.randperm(batch_size)]
+        x_hat_swap_t = self.decoder(z_t_swap, z_g, output_len=self.window_size)
+        l2_t = l2_g = torch.zeros((1, ), device=x.device)
+        #l2_t = -0.05 * F.cosine_similarity(torch.reshape(z_t_swap, (-1, self.local_size)),
+        #                                   torch.reshape(z_t, (-1, self.local_size)), dim=-1).mean()
+        #l2_t = 0.1 * (z_t[:, 1:, self.shared:] - z_t[:, :-1, self.shared:]).abs().mean()
+        return {
+            'x_hat': x_hat,
+            'x_hat_swap_t': x_hat_swap_t,
+            'x_hat_swap_s': None,
+            'p_zt': local_dist,
+            'p_zg': global_dist,
+            'l2_t': l2_t,
+            'l2_g': torch.zeros((1, ), device=x.device)}
+
+    def elbo(self, x, x_full, validation=False):
+        model_output = self.forward(x, x_full)
+        mse_swap_t = mse_swap_s = torch.zeros((1, ), device=x.device)
+        mse_swap_t = F.mse_loss(model_output['x_hat_swap_t'], x, reduction='none').mean(dim=(0, 2, 3))
+        #mse_swap_s = F.mse_loss(model_output['x_hat_swap_s'], x, reduction='none').mean(dim=(0, 2, 3))
+        mse = F.mse_loss(model_output['x_hat'], x, reduction='none').mean(dim=(0, 2, 3))
+        kl_l = D.kl.kl_divergence(model_output['p_zt'], D.Normal(0., 1.)).mean(dim=(1, 2))
+        if model_output['p_zg'] is not None:
+            #p_zg = D.Normal(model_output['p_zg'].mean.unsqueeze(1).repeat(1, x.size(2), 1),
+            #                model_output['p_zg'].stddev.unsqueeze(1).repeat(1, x.size(2), 1))
+            #kl_g = D.kl.kl_divergence(
+            #    D.Normal(model_output['p_zt'].mean[..., self.shared:],
+            #             model_output['p_zt'].stddev[..., self.shared:]), p_zg).mean(dim=(1, 2))
+            kl_g = D.kl.kl_divergence(model_output['p_zg'], D.Normal(0., 1.)).mean(dim=-1)
+        else:
+            kl_g = torch.zeros((1, ), device=x.device)
+        if self.training:
+            loss = (mse + mse_swap_t + mse_swap_s + self.anneal * (self.beta * kl_l + self.gamma * kl_g + 
+                    model_output['l2_t'] + model_output['l2_g'])).mean(0)
+        else:
+            loss = (mse + mse_swap_t + mse_swap_s + self.beta * kl_l + self.gamma * kl_g + 
+                    model_output['l2_t'] + model_output['l2_g']).mean(0)
         
-    def forward(self, x, mask, window_step=None):
-        batch_size, num_timesteps, _ = x.size()
-        #global_embeddings = F.normalize(self.global_embeddings, p=2, dim=-1)[mask.squeeze(1)]
-        u = F.one_hot(mask, num_classes=223).float().squeeze(1)
-        global_embeddings = self.u_mlp(u)
-        #global_embeddings = F.normalize(global_embeddings, dim=-1)
-        print(global_embeddings.size(), global_embeddings)
-        #global_embeddings = self.global_embeddings / self.global_embeddings.max(0)[0]
-        #global_embeddings = global_embeddings[mask.squeeze(1)]
-        #global_embeddings = self.global_embeddings / torch.norm(self.global_embeddings, p=2, dim=-1).max()
-        #print(torch.norm(global_embeddings, p=2, dim=-1))
-        h_g, local_dist = self.local_encoder(x, window_step=window_step)
-        z_t = self.dropout(local_dist.rsample())
-        #z_g = global_dist.rsample()
-        x_hat_mean = self.decoder(z_t, global_embeddings, output_len=self.window_size)
-        p_x_hat = D.Normal(x_hat_mean, 0.1)
-        return p_x_hat, local_dist, D.Normal(global_embeddings, 0.01), z_t, global_embeddings
+        #loss = mse
+        return (loss, mse.detach().mean(), mse_swap_t.detach().mean(), mse_swap_s.detach().mean(),
+                kl_l.detach().mean(), kl_g.detach().mean())
+
+class GlobalVAE(BaseModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.local_decoder = nn.Sequential(
+            nn.Linear(self.local_size + self.global_size, 128, bias=True), nn.ELU(True), nn.Dropout(0.1),
+            nn.Linear(128, 128, bias=True), nn.ELU(), nn.Dropout(0.1),
+            nn.Linear(128, self.input_size))
+        self.encoder = LayeredConv(self.input_size, self.local_size, self.global_size)
+        
+    def forward(self, x, x_full, window_step=None):
+        window_size, batch_size, num_windows, voxels = x.size()
+        dists, z = self.encoder(x_full)
+        x_hat = self.local_decoder(z)
+        return {
+            'x_hat': x_hat,
+            'dists': dists}
+
+    def elbo(self, x, x_full, validation=False):
+        model_output = self.forward(x, x_full)
+        mse_swap_t = mse_swap_s = torch.zeros((1, ), device=x.device)
+        mse = F.mse_loss(model_output['x_hat'], x, reduction='none').mean(dim=(1, 2, 3))
+        gamma = 1.0
+        kl = gamma * D.kl.kl_divergence(model_output['dists'][0], D.Normal(0., 1.)).mean(dim=(1, 2))
+        #print(f'0: {kl.detach().mean()}')
+        for (i, dist) in enumerate(model_output['dists'][1:]):
+            #print(f'{i+1}: {D.kl.kl_divergence(dist, D.Normal(0., 1.)).detach().mean()}')
+            gamma *= 0.5
+            kl += gamma * D.kl.kl_divergence(dist, D.Normal(0., 1.)).mean(dim=(1))
+        kl /= len(model_output['dists'])
+        if self.training:
+            loss = (mse + mse_swap_t + mse_swap_s + self.anneal * (self.beta * kl)).mean(0)
+        else:
+            loss = (mse + mse_swap_t + mse_swap_s + self.beta * kl).mean(0)
+        #loss = mse
+        return (loss, mse.detach().mean(), mse_swap_t.detach().mean(), mse_swap_s.detach().mean(),
+                kl.detach().mean(), torch.zeros((1, )))

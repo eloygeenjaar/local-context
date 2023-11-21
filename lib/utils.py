@@ -395,14 +395,20 @@ def embed_data(device, model, train_dataset, valid_dataset, test_dataset):
                             num_workers=5)
     y_train, embedding_train, time_train = [], [], []
     for (i, batch) in enumerate(train_dataloader):
-        x, mask, (y_local, y_global) = batch
+        x, task_mask, mask, y = batch
         x = x.to(device, non_blocking=True)
-        mask = mask.to(device, non_blocking=True)
+        task_mask = task_mask.to(device, non_blocking=True)
+        x_masked = mask_input_extra(x, task_mask)
+        x_masked = x_masked.float()
         with torch.no_grad():
-            p_x_hat, local_dist, global_dist, z_t, z_g = model(x, mask, window_step=model.window_step)
-        y_train.append(y_global.cpu())
-        embedding_train.append(global_dist.mean[:x.size(0)].cpu())
-        time_train.append(local_dist.mean.cpu())
+            model_output = model(x_masked, x.float())
+        y_train.append(y[1].cpu())
+        if model_output['p_zg'] is not None:
+            embedding_train.append(model_output['p_zg'].mean[:x.size(0)].cpu())
+        else:
+            embedding_train.append(torch.zeros((1, )))
+        time_train.append(model_output['p_zt'].mean.cpu())
+        torch.cuda.empty_cache()
 
     y_train = torch.cat(y_train, dim=0).numpy()
     x_train = torch.cat(embedding_train, dim=0).numpy()
@@ -410,14 +416,20 @@ def embed_data(device, model, train_dataset, valid_dataset, test_dataset):
 
     y_valid, embedding_valid, time_valid = [], [], []
     for (i, batch) in enumerate(valid_dataloader):
-        x, mask, (y_local, y_global) = batch
+        x, task_mask, mask, y = batch
         x = x.to(device, non_blocking=True)
-        mask = mask.to(device, non_blocking=True)
+        task_mask = task_mask.to(device, non_blocking=True)
+        x_masked = mask_input_extra(x, task_mask)
+        x_masked = x_masked.float()
         with torch.no_grad():
-            p_x_hat, local_dist, global_dist, z_t, z_g = model(x, mask, window_step=model.window_step)
-        y_valid.append(y_global.cpu())
-        embedding_valid.append(global_dist.mean[:x.size(0)].cpu())
-        time_valid.append(local_dist.mean.cpu())
+            model_output = model(x_masked, x.float())
+        y_valid.append(y[1].cpu())
+        if model_output['p_zg'] is not None:
+            embedding_valid.append(model_output['p_zg'].mean[:x.size(0)].cpu())
+        else:
+            embedding_valid.append(torch.zeros((1, )))
+        time_valid.append(model_output['p_zt'].mean.cpu())
+        torch.cuda.empty_cache()
 
     y_valid = torch.cat(y_valid, dim=0).numpy()
     x_valid = torch.cat(embedding_valid, dim=0).numpy()
@@ -425,14 +437,20 @@ def embed_data(device, model, train_dataset, valid_dataset, test_dataset):
 
     y_test, embedding_test, time_test = [], [], []
     for (i, batch) in enumerate(test_dataloader):
-        x, mask, (y_local, y_global) = batch
+        x, task_mask, mask, y = batch
         x = x.to(device, non_blocking=True)
-        mask = mask.to(device, non_blocking=True)
+        task_mask = task_mask.to(device, non_blocking=True)
+        x_masked = mask_input_extra(x, task_mask)
+        x_masked = x_masked.float()
         with torch.no_grad():
-            p_x_hat, local_dist, global_dist, z_t, z_g = model(x, mask, window_step=model.window_step)
-        y_test.append(y_global.cpu())
-        embedding_test.append(global_dist.mean[:x.size(0)].cpu())
-        time_test.append(local_dist.mean.cpu())
+            model_output = model(x_masked, x.float())
+        y_test.append(y[1].cpu())
+        if model_output['p_zg'] is not None:
+            embedding_test.append(model_output['p_zg'].mean[:x.size(0)].cpu())
+        else:
+            embedding_test.append(torch.zeros((1, )))
+        time_test.append(model_output['p_zt'].mean.cpu())
+        torch.cuda.empty_cache()
 
     y_test = torch.cat(y_test, dim=0).numpy()
     x_test = torch.cat(embedding_test, dim=0).numpy()
@@ -451,36 +469,39 @@ def embed_global_data(device, model, train_dataset, valid_dataset, test_dataset)
                             num_workers=5)
     y_train, embedding_train = [], []
     for (i, batch) in enumerate(train_dataloader):
-        x, mask, (y_local, y_global) = batch
-        x = x.to(device, non_blocking=True)
+        x, task_mask, mask, y = batch
+        x = x.to(device, non_blocking=True).float()
         with torch.no_grad():
-            _, global_dist = model.global_encoder(x)
-        y_train.append(y_global.cpu())
+            global_dist = model.global_encoder(mask_input_extra(x, task_mask))
+        y_train.append(y[1].cpu())
         embedding_train.append(global_dist.mean[:x.size(0)].cpu())
+        torch.cuda.empty_cache()
 
     y_train = torch.cat(y_train, dim=0).numpy()
     x_train = torch.cat(embedding_train, dim=0).numpy()
 
     y_valid, embedding_valid = [], []
     for (i, batch) in enumerate(valid_dataloader):
-        x, mask, (y_local, y_global) = batch
-        x = x.to(device, non_blocking=True)
+        x, task_mask, mask, y = batch
+        x = x.to(device, non_blocking=True).float()
         with torch.no_grad():
-            _, global_dist = model.global_encoder(x)
-        y_valid.append(y_global.cpu())
+            global_dist = model.global_encoder(mask_input_extra(x, task_mask))
+        y_valid.append(y[1].cpu())
         embedding_valid.append(global_dist.mean[:x.size(0)].cpu())
+        torch.cuda.empty_cache()
 
     y_valid = torch.cat(y_valid, dim=0).numpy()
     x_valid = torch.cat(embedding_valid, dim=0).numpy()
 
     y_test, embedding_test = [], []
     for (i, batch) in enumerate(test_dataloader):
-        x, mask, (y_local, y_global) = batch
-        x = x.to(device, non_blocking=True)
+        x, task_mask, mask, y = batch
+        x = x.to(device, non_blocking=True).float()
         with torch.no_grad():
-            _, global_dist = model.global_encoder(x)
-        y_test.append(y_global.cpu())
+            global_dist = model.global_encoder(mask_input_extra(x, task_mask))
+        y_test.append(y[1].cpu())
         embedding_test.append(global_dist.mean[:x.size(0)].cpu())
+        torch.cuda.empty_cache()
 
     y_test = torch.cat(y_test, dim=0).numpy()
     x_test = torch.cat(embedding_test, dim=0).numpy()
@@ -488,6 +509,45 @@ def embed_global_data(device, model, train_dataset, valid_dataset, test_dataset)
     return ((x_train, y_train),
             (x_valid, y_valid),
             (x_test, y_test))
+
+def embed_sfncs(device, model, train_dataset, valid_dataset, test_dataset):
+    train_dataloader = DataLoader(train_dataset, batch_size=8, shuffle=False,
+                            num_workers=5)
+    valid_dataloader = DataLoader(valid_dataset, batch_size=8, shuffle=False,
+                            num_workers=5)
+    test_dataloader = DataLoader(test_dataset, batch_size=8, shuffle=False,
+                            num_workers=5)
+
+    row, col = torch.triu_indices(379, 379, 1)
+    x_train = []
+    for (i, batch) in enumerate(train_dataloader):
+        x, task_mask, mask, y = batch
+        temp = []
+        for b in range(x.size(0)):
+            temp.append(torch.corrcoef(x[b].permute(1, 0))[row, col])
+        x_train.append(torch.stack(temp, dim=0).cpu())
+    x_train = torch.cat(x_train, dim=0).cpu().numpy()
+
+    x_valid = []
+    for (i, batch) in enumerate(train_dataloader):
+        x, task_mask, mask, y = batch
+        temp = []
+        for b in range(x.size(0)):
+            temp.append(torch.corrcoef(x[b].permute(1, 0))[row, col])
+        x_valid.append(torch.stack(temp, dim=0).cpu())
+    x_valid = torch.cat(x_valid, dim=0).cpu().numpy()
+
+
+    x_test = []
+    for (i, batch) in enumerate(test_dataloader):
+        x, task_mask, mask, y = batch
+        temp = []
+        for b in range(x.size(0)):
+            temp.append(torch.corrcoef(x[b].permute(1, 0))[row, col])
+        x_test.append(torch.stack(temp, dim=0).cpu())
+    x_test = torch.cat(x_test, dim=0).cpu().numpy()
+
+    return x_train, x_valid, x_test
 
 # Adapted from: https://github.com/googleinterns/local_global_ts_representation/blob/main/gl_rep/data_loaders.py
 def normalize_signals(signals, masks, inds):
@@ -577,3 +637,35 @@ def get_icafbirn(seed):
     valid_df = df.loc[valid_index].copy()
     test_df = df.loc[test_index].copy()
     return train_df, valid_df, test_df
+
+def mask_input(x, mask):
+    voxels = x.size(-1)
+    batch, num_tasks, num_occurrences, _ = mask.size()
+    xs = []
+    for b in range(batch):
+        x_tasks = []
+        for i in range(num_tasks):
+            x_occs = []
+            for j in range(num_occurrences):
+                window = x[b, mask[b, i, j, 0]:mask[b, i, j, 1]].clone()
+                x_occs.append(window)
+            x_tasks.append(torch.stack(x_occs, dim=1))
+        xs.append(torch.stack(x_tasks, dim=1))
+    x = torch.stack(xs, dim=1)
+    window_size = x.size(0)
+    x = x.view(window_size, batch * num_tasks * num_occurrences, voxels)
+    return x
+
+def mask_input_extra(x, mask, window_step=2):
+    batch, num_timesteps, voxels = x.size()
+    window_size = 32
+    num_windows = (num_timesteps - window_size) // window_step + 1
+    xs = []
+    for b in range(batch):
+        x_windows = []
+        for i in range(num_windows):
+            window = x[b, (i * window_step):(i * window_step + window_size)].clone()
+            x_windows.append(window)
+        xs.append(torch.stack(x_windows, dim=1))
+    x = torch.stack(xs, dim=1)
+    return x

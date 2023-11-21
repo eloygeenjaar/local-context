@@ -4,8 +4,10 @@ import pandas as pd
 import nibabel as nb
 from tqdm import tqdm
 from nilearn import signal
+from scipy.interpolate import CubicSpline
 from torch.nn import functional as F
 from torch.utils.data import Dataset
+from torch import distributions as D
 from lib.utils import get_airquality, get_physionet, get_fbirn, get_icaukbb, get_icafbirn
 from sklearn.model_selection import train_test_split
 
@@ -223,7 +225,7 @@ class PhysioNet(Dataset):
         return 0.001
 
 class fBIRN(Dataset):
-    def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
+    def __init__(self, data_type, normalization, seed, num_folds, fold_ix, window_step=10):
         super().__init__()
         self.data_type = data_type
         self.seed = seed
@@ -237,37 +239,47 @@ class fBIRN(Dataset):
         else:
             self.df = test_df.copy()
         self.indices = self.df.index.values
-
-        data = []
+        self.TR = 2.0
+        self.new_TR = 0.72
+        x = np.arange(150) * self.TR
+        new_x = np.arange(300 // self.new_TR) * self.new_TR
+        data, masks = [], []
+        #j = 1
         print(f'Loading {data_type} data')
         for (i, row) in tqdm(self.df.iterrows(), total=self.df.shape[0]):
-            x = np.transpose(nb.load(row['path']).get_fdata(), (3, 0, 1, 2))
-            sd_mask = x.std(0) != 0
-            x[:, sd_mask] -= x[:, sd_mask].mean(0)
-            x[:, sd_mask] /= x[:, sd_mask].std(0)
-            x_pad = np.pad(x, ((2, 1), (6, 5), (1, 0), (6, 6)), mode="constant", constant_values=0)
-            data.append(x_pad.astype(np.float16))
-        self.X = np.stack(data, axis=0)
-        self.mask = F.pad(torch.ones(x.shape), (6, 6, 1, 0, 6, 5, 2, 1), "constant", 0).bool()
+            data_subj = nb.load(row['path']).get_fdata()[:, :, 26, :150]
+            data_subj = np.reshape(data_subj, (-1, 150))
+            data_subj = np.transpose(data_subj, (1, 0))
+            data_subj = signal.clean(data_subj, detrend=True,
+            standardize='zscore_sample', t_r=self.TR,
+            low_pass=0.10, high_pass=0.01)
+            new_data = []
+            for i in range(data_subj.shape[-1]):
+                cs = CubicSpline(x, data_subj[:, i])
+                new_data.append(cs(new_x))
+            new_data = np.stack(new_data, axis=1)
+            data.append(new_data)
+        #    j += 1
+        #    if j == 12:
+        #        break
+        self.data = np.stack(data, axis=0).astype(np.float16)
+        self.window_size = 32 #int(self.window_size_sec // self.new_TR)
 
     def __len__(self):
-        return self.df.shape[0]
+        return self.data.shape[0]
 
     def __getitem__(self, ix):
-        x = torch.from_numpy(self.X[ix]).float()
-        return x.view(x.size(0), -1).float(), self.mask, (torch.zeros((1, )), self.df.loc[self.indices[ix], 'diagnosis'])
+        data = self.data[ix]
+        data = torch.from_numpy(data)
+        return data, 0, 0, (0, 1)
 
     @property
     def data_size(self):
-        return 128
+        return 3339
 
     @property
     def num_classes(self):
         return 2
-
-    @property
-    def window_size(self):
-        return 10
 
     @property
     def mask_windows(self):
@@ -277,8 +289,12 @@ class fBIRN(Dataset):
     def learning_rate(self):
         return 0.001
 
+    @property
+    def num_timesteps(self):
+        return self.data.shape[1]
+
 class ICAUKBiobank(Dataset):
-    def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
+    def __init__(self, data_type, normalization, seed, num_folds, fold_ix, window_step=30):
         super().__init__()
         self.data_type = data_type
         self.seed = seed
@@ -294,18 +310,36 @@ class ICAUKBiobank(Dataset):
 
         self.indices = self.df.index.values
         self.mask = torch.ones((100, 53)).bool()
+        data = []
+        i = 0 
+        for (ix, row) in self.df.iterrows():
+            if i % 100 == 0:
+                print(i / self.df.shape[0])
+            data_subj = nb.load(row['path']).get_fdata(dtype=np.float32)[:100, comp_ix]
+            data_subj = signal.clean(data_subj, detrend=True,
+            standardize='zscore_sample', t_r=0.735,
+            low_pass=0.10, high_pass=0.01)
+            data.append(data_subj)
+            i += 1
+        self.data = torch.from_numpy(np.stack(data, axis=0)).float()
+        # (subjects, num_windows, input_size, window_size)
+        self.data = self.data.unfold(1, 30, window_step)
+        num_subjects, num_windows, input_size, window_size = self.data.size()
+        self.data = torch.reshape(self.data, (num_subjects * num_windows, input_size, window_size))
+        self.mask = torch.ones_like(self.data).bool()
+        print(self.data.size(0))
 
     def __len__(self):
-        return self.df.shape[0]
+        return self.data.size(0)
 
     def __getitem__(self, ix):
-        x = nb.load(self.df.loc[self.indices[ix], 'path']).get_fdata()[:100, comp_ix]
+        #x = nb.load(self.df.loc[self.indices[ix], 'path']).get_fdata()[:100, comp_ix]
         # TR from: https://biobank.ctsu.ox.ac.uk/crystal/crystal/docs/brain_mri.pdf
-        x = signal.clean(x, detrend=True,
-            standardize='zscore_sample', t_r=0.735,
-            low_pass=0.15, high_pass=0.01)
-        x = torch.from_numpy(x).float()
-        return x.view(x.size(0), -1).float(), self.mask, (0, self.df.loc[self.indices[ix], 'sex'])
+        #x = signal.clean(x, detrend=True,
+        #    standardize='zscore_sample', t_r=0.735,
+        #    low_pass=0.1, high_pass=0.01)
+        x = self.data[ix]
+        return x, 0, self.mask[ix], (0, 1)#(0, self.df.loc[self.indices[ix], 'sz'])
 
     @property
     def data_size(self):
@@ -317,7 +351,11 @@ class ICAUKBiobank(Dataset):
 
     @property
     def window_size(self):
-        return 10
+        return 30
+    
+    @property
+    def num_timesteps(self):
+        return 100
 
     @property
     def mask_windows(self):
@@ -328,7 +366,7 @@ class ICAUKBiobank(Dataset):
         return 0.001
 
 class ICAfBIRN(Dataset):
-    def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
+    def __init__(self, data_type, normalization, seed, num_folds, fold_ix, window_step=20):
         super().__init__()
         self.data_type = data_type
         self.seed = seed
@@ -337,28 +375,39 @@ class ICAfBIRN(Dataset):
 
         if data_type == 'train':
             self.df = train_df.copy()
+            self.dropout_rate = 0.05
+            self.bern = D.Bernoulli(1 - self.dropout_rate)
         elif data_type == 'valid':
             self.df = valid_df.copy()
         else:
             self.df = test_df.copy()
-
         self.indices = self.df.index.values
-        self.mask = torch.ones((150, 53)).bool()
+        self.TR = 2.0
+        self.new_TR = 0.72
+        x = np.arange(150) * self.TR
+        new_x = np.arange(300 // self.new_TR) * self.new_TR
+        data, masks = [], []
+        for (ix, row) in self.df.iterrows():
+            data_subj = nb.load(row['path']).get_fdata(dtype=np.float32)[:150, comp_ix]
+            data_subj = signal.clean(data_subj, detrend=True,
+            standardize='zscore_sample', t_r=self.TR,
+            low_pass=0.10, high_pass=0.01)
+            new_data = []
+            for i in range(len(comp_ix)):
+                cs = CubicSpline(x, data_subj[:, i])
+                new_data.append(cs(new_x))
+            new_data = np.stack(new_data, axis=1)
+            data.append(data_subj)
+        self.data = np.stack(data, axis=0).astype(np.float16)
+        self.window_size = 32 #int(self.window_size_sec // self.new_TR)
 
     def __len__(self):
-        return self.df.shape[0]
+        return self.data.shape[0]
 
     def __getitem__(self, ix):
-        x = nb.load(self.df.loc[self.indices[ix], 'path']).get_fdata()[:150, comp_ix]
-        # TR from: https://biobank.ctsu.ox.ac.uk/crystal/crystal/docs/brain_mri.pdf
-        #x = signal.clean(x, detrend=True,
-        #    standardize='zscore_sample', t_r=2.0,
-        #    low_pass=0.15, high_pass=0.01)
-        x = signal.clean(x, detrend=True,
-            standardize='zscore_sample', t_r=2.0,
-            low_pass=None, high_pass=None)
-        x = torch.from_numpy(x).float()
-        return x.view(x.size(0), -1).float(), torch.Tensor([ix]).long(), (0, self.df.loc[self.indices[ix], 'sz'])
+        data = self.data[ix]
+        data = torch.from_numpy(data)
+        return data, 0, 0, (0, self.df.loc[self.indices[ix], 'sz'] == 2)
 
     @property
     def data_size(self):
@@ -369,8 +418,56 @@ class ICAfBIRN(Dataset):
         return 2
 
     @property
-    def window_size(self):
-        return 20
+    def mask_windows(self):
+        return 4
+
+    @property
+    def learning_rate(self):
+        return 0.001
+
+    @property
+    def num_timesteps(self):
+        return self.data.shape[1]
+
+class HCPLeft(Dataset):
+    def __init__(self, data_type, *args, **kwargs):
+        self.data_type = data_type
+        self.df = pd.read_csv(f'/data/users1/egeenjaar/transformed-spaces/left.csv', index_col=0)
+        if self.data_type == 'train':
+            self.df = self.df.iloc[:int(self.df.shape[0] * 0.7)].copy()
+        elif self.data_type == 'valid':
+            self.df = self.df.iloc[int(self.df.shape[0] * 0.7):int(self.df.shape[0] * 0.8)].copy()
+        elif self.data_type == 'test':
+            self.df = self.df.iloc[int(self.df.shape[0] * 0.8):].copy()
+        elif self.data_type == 'train_valid':
+            self.df = self.df.iloc[:int(self.df.shape[0] * 0.8)].copy()
+        self.indices = self.df.index.values
+        self.behavioral = pd.read_csv('behavioral.csv', index_col=0)
+        self.df = self.df.join(self.behavioral, how='left')
+        to_replace = list(self.df['Age'].unique())
+        value = np.arange(len(to_replace))
+        d = {tr: v for tr, v in zip(to_replace, value)}
+        self.df['Age'] = self.df['Age'].replace(d)
+        data, masks = [], []
+        for (i, row) in tqdm(self.df.iterrows(), total=self.df.shape[0]):
+            data_subj = np.load(row['fmri']).astype(np.float16)
+            data.append(data_subj)
+            masks.append(np.load(row['targets']).astype(int))
+        
+        self.window_size_sec = 20.
+        self.window_size = 32 #int(self.window_size_sec // self.new_TR)
+        self.window_step = 10 #int(window_step // self.new_TR)
+        self.data = np.stack(data, axis=0)
+        self.mask = np.stack(masks, axis=0)
+        #self.data = torch.from_numpy(np.stack(data, axis=0)).float()
+        #self.data = self.data.unfold(1, self.window_size, self.window_step)
+        #num_subjects, num_windows, input_size, window_size = self.data.size()
+        #self.data = torch.reshape(self.data, (num_subjects * num_windows, input_size, window_size))
+        #self.masks = torch.ones_like(self.data).bool()
+
+    @property
+    def data_size(self):
+        return 91282 
 
     @property
     def mask_windows(self):
@@ -378,8 +475,186 @@ class ICAfBIRN(Dataset):
 
     @property
     def learning_rate(self):
-        return 0.0005
+        return 0.001
 
     @property
     def num_timesteps(self):
-        return 150
+        return 284
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, ix):
+        data = self.data[ix]
+        task_mask = self.mask[ix]
+        data = torch.from_numpy(data)
+        task_mask = torch.from_numpy(task_mask)
+       # data = data.view(-1, 91282, self.window_size).permute(0, 2, 1)
+        return data, task_mask, 0, (0, self.df.loc[self.indices[ix], 'Age'])#(0, self.df.loc[self.indices[ix], 'sz'])
+
+class MotorGlasser(Dataset):
+    def __init__(self, data_type, *args, **kwargs):
+        self.data_type = data_type
+        self.df = pd.read_csv(f'/data/users1/egeenjaar/local-global/motor_glasser.csv', index_col=0)
+        if self.data_type == 'train':
+            self.df = self.df.iloc[:int(self.df.shape[0] * 0.7)].copy()
+        elif self.data_type == 'valid':
+            self.df = self.df.iloc[int(self.df.shape[0] * 0.7):int(self.df.shape[0] * 0.8)].copy()
+        elif self.data_type == 'test':
+            self.df = self.df.iloc[int(self.df.shape[0] * 0.8):].copy()
+        elif self.data_type == 'train_valid':
+            self.df = self.df.iloc[:int(self.df.shape[0] * 0.8)].copy()
+        self.indices = self.df.index.values
+        self.behavioral = pd.read_csv('behavioral.csv', index_col=0)
+        self.df = self.df.join(self.behavioral, how='left')
+        to_replace = list(self.df['Age'].unique())
+        value = np.arange(len(to_replace))
+        d = {tr: v for tr, v in zip(to_replace, value)}
+        self.df['Age'] = self.df['Age'].replace(d)
+        data, masks = [], []
+        for (i, row) in tqdm(self.df.iterrows(), total=self.df.shape[0]):
+            data_subj = np.load(row['fmri']).astype(np.float16)
+            data.append(data_subj)
+        
+        self.window_size_sec = 20.
+        self.window_size = 16 #int(self.window_size_sec // self.new_TR)
+        self.window_step = 8 #int(window_step // self.new_TR)
+        self.data = np.stack(data, axis=0)
+
+    @property
+    def data_size(self):
+        return 379
+
+    @property
+    def mask_windows(self):
+        return 4
+
+    @property
+    def learning_rate(self):
+        return 0.001
+
+    @property
+    def num_timesteps(self):
+        return 284
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, ix):
+        data = self.data[ix]
+        data = torch.from_numpy(data)
+       # data = data.view(-1, 91282, self.window_size).permute(0, 2, 1)
+        return data, 0, 0, (0, self.df.loc[self.indices[ix], 'Age'])#(0, self.df.loc[self.indices[ix], 'sz'])
+
+class WMGlasser(Dataset):
+    def __init__(self, data_type, *args, **kwargs):
+        self.data_type = data_type
+        self.df = pd.read_csv(f'/data/users1/egeenjaar/local-global/WM_LR_glasser.csv', index_col=0)
+        if self.data_type == 'train':
+            self.df = self.df.iloc[:int(self.df.shape[0] * 0.7)].copy()
+        elif self.data_type == 'valid':
+            self.df = self.df.iloc[int(self.df.shape[0] * 0.7):int(self.df.shape[0] * 0.8)].copy()
+        elif self.data_type == 'test':
+            self.df = self.df.iloc[int(self.df.shape[0] * 0.8):].copy()
+        elif self.data_type == 'train_valid':
+            self.df = self.df.iloc[:int(self.df.shape[0] * 0.8)].copy()
+        self.indices = self.df.index.values
+        self.behavioral = pd.read_csv('behavioral.csv', index_col=0)
+        self.df = self.df.join(self.behavioral, how='left')
+        to_replace = list(self.df['Age'].unique())
+        value = np.arange(len(to_replace))
+        d = {tr: v for tr, v in zip(to_replace, value)}
+        self.df['Age'] = self.df['Age'].replace(d)
+        self.df['Gender'] = self.df['Gender'] == 'F'
+        data, masks = [], []
+        for (i, row) in tqdm(self.df.iterrows(), total=self.df.shape[0]):
+            data_subj = np.load(row['fmri']).astype(np.float16)
+            data.append(data_subj)
+        
+        self.window_size_sec = 20.
+        self.window_size = 10 #int(self.window_size_sec // self.new_TR)
+        self.window_step = 8 #int(window_step // self.new_TR)
+        self.data = np.stack(data, axis=0)
+
+    @property
+    def data_size(self):
+        return 379
+
+    @property
+    def mask_windows(self):
+        return 4
+
+    @property
+    def learning_rate(self):
+        return 0.001
+
+    @property
+    def num_timesteps(self):
+        return 284
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, ix):
+        data = self.data[ix]
+        data = torch.from_numpy(data)
+       # data = data.view(-1, 91282, self.window_size).permute(0, 2, 1)
+        return data, 0, 0, (0, self.df.loc[self.indices[ix], 'WM_Task_Acc'])#(0, self.df.loc[self.indices[ix], 'sz'])
+
+
+class RestGlasser(Dataset):
+    def __init__(self, data_type, *args, **kwargs):
+        self.data_type = data_type
+        self.df = pd.read_csv(f'/data/users1/egeenjaar/local-global/REST1_LR_glasser.csv', index_col=0)
+        if self.data_type == 'train':
+            self.df = self.df.iloc[:int(self.df.shape[0] * 0.7)].copy()
+        elif self.data_type == 'valid':
+            self.df = self.df.iloc[int(self.df.shape[0] * 0.7):int(self.df.shape[0] * 0.8)].copy()
+        elif self.data_type == 'test':
+            self.df = self.df.iloc[int(self.df.shape[0] * 0.8):].copy()
+        elif self.data_type == 'train_valid':
+            self.df = self.df.iloc[:int(self.df.shape[0] * 0.8)].copy()
+        self.indices = self.df.index.values
+        self.behavioral = pd.read_csv('behavioral.csv', index_col=0)
+        self.df = self.df.join(self.behavioral, how='left')
+        to_replace = list(self.df['Age'].unique())
+        value = np.arange(len(to_replace))
+        d = {tr: v for tr, v in zip(to_replace, value)}
+        self.df['Age'] = self.df['Age'].replace(d)
+        self.df['Gender'] = self.df['Gender'] == 'F'
+        data, masks = [], []
+        for (i, row) in tqdm(self.df.iterrows(), total=self.df.shape[0]):
+            data_subj = np.load(row['fmri']).astype(np.float16)
+            if data_subj.shape[0] != 1200:
+                print(i, row, data_subj.shape)
+            data.append(data_subj)
+        
+        self.window_size_sec = 20.
+        self.window_size = 10 #int(self.window_size_sec // self.new_TR)
+        self.window_step = 8 #int(window_step // self.new_TR)
+        self.data = np.stack(data, axis=0)
+
+    @property
+    def data_size(self):
+        return 379
+
+    @property
+    def mask_windows(self):
+        return 4
+
+    @property
+    def learning_rate(self):
+        return 0.0001
+
+    @property
+    def num_timesteps(self):
+        return 284
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, ix):
+        data = self.data[ix]
+        data = torch.from_numpy(data)[:1024]
+       # data = data.view(-1, 91282, self.window_size).permute(0, 2, 1)
+        return data, 0, 0, (0, self.df.loc[self.indices[ix], 'WM_Task_Acc'])#(0, self.df.loc[self.indices[ix], 'sz'])
