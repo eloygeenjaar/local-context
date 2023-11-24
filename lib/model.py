@@ -153,7 +153,7 @@ class GLR(BaseModel):
         super().__init__(*args, **kwargs)
         self.global_encoder = EncoderGlobal(self.input_size, self.global_size, 32, 3)
         self.conv_encoder = convEncoder(128, 3)
-        self.conv_decoder = convDecoder(32 + 256, 3)
+        self.conv_decoder = convDecoder(128, 3)
         self.lin_encoder = nn.Linear(12288, 64)
         self.lin_decoder = nn.Linear(64, 12288)
     def forward(self, x, mask, window_step=None):
@@ -161,13 +161,10 @@ class GLR(BaseModel):
         num_timesteps = x.size()[1]
         print("FIRST SHAPE")
         print(x.shape)
-        # torch.Size([8, 8, 64, 64, 3])
-        #conv_x = self.encoder_frame(x)
-        #print("SHAPE AFTER CONV ENCODE")
-        #print(conv_x.shape)
 
-        x = self.lin_encoder(x)
-        print("AFTER LIN ENCODE")
+        # x = self.lin_encoder(x)
+        x = self.encoder_frame(x)
+        print("AFTER ENCODE")
         print(x.shape)
         h_l, global_dist = self.global_encoder(x)
         h_g, local_dist = self.local_encoder(x, window_step=window_step)
@@ -177,8 +174,12 @@ class GLR(BaseModel):
         x_hat_mean = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
         print("IMPORTANT SHAPE")
         print(x_hat_mean.shape)
-        x_hat_mean = self.lin_decoder(x_hat_mean)
-        
+
+        # x_hat_mean = self.lin_decoder(x_hat_mean)
+        x_hat_mean = self.conv_decoder(x_hat_mean)
+        print("AFTER DECODE")
+        print(x_hat_mean.shape)
+        x_hat_mean = x_hat_mean.view(x_hat_mean.shape[0], x_hat_mean.shape[1], -1) #for conv
         p_x_hat = D.Normal(x_hat_mean, 0.1)
         # p_x_hat = self.conv_decoder(p_x_hat)
         return p_x_hat, local_dist, global_dist, z_t, z_g
