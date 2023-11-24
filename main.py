@@ -18,7 +18,7 @@ if __name__ == "__main__":
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
     torch.cuda.manual_seed(config["seed"])
-    version = f'm{config["model"]}_d{config["dataset"]}_g{config["gamma"]}_s{config["seed"]}_n{config["normalization"]}_s{config["local_size"]}_g{config["global_size"]}_f{config["fold_ix"]}'
+    version = f'test_global_m{config["model"]}_d{config["dataset"]}_g{config["gamma"]}_s{config["seed"]}_n{config["normalization"]}_s{config["local_size"]}_g{config["global_size"]}_f{config["fold_ix"]}'
     data_module = importlib.import_module('lib.data')
     dataset_type = getattr(data_module, config['dataset'])
     # The last two arguments are only used for fBIRN
@@ -26,8 +26,8 @@ if __name__ == "__main__":
     valid_dataset = dataset_type('valid', config['normalization'], config["seed"], config['num_folds'], config['fold_ix'])
     window_size, mask_windows, lr, num_timesteps = train_dataset.window_size, train_dataset.mask_windows, train_dataset.learning_rate, train_dataset.num_timesteps
     assert train_dataset.data_size == valid_dataset.data_size
-    config['input_size'] = train_dataset.data_size
-    #config['input_size'] = 128
+    # config['input_size'] = train_dataset.data_size
+    config['input_size'] = 64
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
     print(config['input_size'])
@@ -42,13 +42,13 @@ if __name__ == "__main__":
     trainer = pl.Trainer(max_epochs=200, logger=[tb_logger, csv_logger],
                          callbacks=[checkpoint_callback, early_stopping], devices=1)
 
-    train_loader = DataLoader(train_dataset, num_workers=5, pin_memory=True,
+    train_loader = DataLoader(train_dataset, num_workers=3, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=True,
-                              persistent_workers=True, prefetch_factor=5, drop_last=True)
+                              persistent_workers=True, drop_last=True)
 
-    valid_loader = DataLoader(valid_dataset, num_workers=5, pin_memory=True,
+    valid_loader = DataLoader(valid_dataset, num_workers=3, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=False,
-                              persistent_workers=True, prefetch_factor=5, drop_last=False)
+                              persistent_workers=True, drop_last=False)
 
 
     trainer.fit(model, train_loader, valid_loader)

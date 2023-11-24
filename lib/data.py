@@ -101,8 +101,6 @@ class Sprite(object):
         data_ancher = self.df[index] # (8, 64, 64, 3)
         x = torch.from_numpy(data_ancher).float()
         # return x.view(x.size(0), -1).float(), self.mask[index], self.y[index]
-        print("DATA GET ITEM")
-        print(x.float().shape)
         return x.float(), self.mask[index], self.y[index]
 
     @property

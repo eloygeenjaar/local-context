@@ -43,8 +43,6 @@ class BaseModel(pl.LightningModule):
         raise NotImplementedError
 
     def elbo(self, x, mask):
-        print("ELBO")
-        print(x.shape)
         #(9000, 8, 64, 64, 3)
         batch_size = x.size()[0]
         num_timesteps = x.size()[1]
@@ -57,25 +55,34 @@ class BaseModel(pl.LightningModule):
             cf_loss = self.calc_cf_loss(x, x_hat_dist, pz_t, p_zg, z_t, z_g)
         else:
             cf_loss = torch.zeros((1, ), device=x.device)
-
-        print("BEFORE PERMUTE -1 ")
+        print("ELBO X")
         print(x.shape)
 
+
+
         # x_w is size: (batch_size, num_windows, input_size, window_size)
-        x_w = x.unfold(1, self.window_size, self.window_step)
-        # Permute to: (batch_size, num_windows, window_size, input_size)
-        print("BEFORE PERMUTE")
-        print(x_w.shape)
-        x_w = x_w.permute(0, 1, 3, 2)
-        num_windows = x_w.size(1)
-        x_w = torch.reshape(x_w, (batch_size, -1, input_size))
+        # x_w = x.unfold(1, self.window_size, self.window_step)
+        # print("UNFOLD")
+        # print(x_w.shape)
+        # # Permute to: (batch_size, num_windows, window_size, input_size)
+        # x_w = x_w.permute(0, 1, 3, 2)
+        # print("permute")
+        # print(x_w.shape)
+        # num_windows = x_w.size(1)
+        # x_w = torch.reshape(x_w, (batch_size, -1, input_size))
+        # print("reshape")
+        # print(x_w.shape)
+        x_w = x
         nll = -x_hat_dist.log_prob(x_w)  # shape=(M*batch_size, time, dimensions)
         # Prior is previous timestep -> smoothness
         pz = D.Normal(pz_t.mean[:, :-1], pz_t.stddev[:, :-1])
         pz_t = D.Normal(pz_t.mean[:, 1:], pz_t.stddev[:, 1:])
         kl_l = D.kl.kl_divergence(pz_t, pz) #/ (x.size(1) // self.window_size)
         #kl_l = kl_l.sum(1).mean(-1)  # shape=(M*batch_size, time, dimensions)
-        kl_l = kl_l.mean(dim=(1, 2))
+        print("KLL NLL SHAPE")
+        print(kl_l.shape)
+        print(nll.shape)
+        kl_l = kl_l.mean(dim=(1))
         # I use the inverse of the original mask
         #nll = torch.where(mask==0, torch.zeros_like(nll), nll)
 
@@ -103,12 +110,10 @@ class BaseModel(pl.LightningModule):
         raise NotImplementedError
 
     def training_step(self, batch, batch_ix):
-        print("TRAINING???")
         x, mask, y = batch
-        x = x.view(x.shape[0], x.shape[1], -1)
+        x = x.permute(0, 1, 4, 2, 3)
+        x = x.contiguous().view(-1, 8, 12288)
         opt = self.optimizers()
-        print("FIRST??")
-        print(x.shape)
         # Forward pass
         elbo, nll, kl_l, kl_g, cf, mse = self.elbo(x, mask)
         # Optimization
@@ -117,17 +122,17 @@ class BaseModel(pl.LightningModule):
         #nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
         opt.step()
         self.anneal = min(1.0, self.anneal + 1/500)
-        self.log_dict({"tr_elbo_step": elbo, "tr_nll_step": nll, "tr_kl_l_step": kl_l, "tr_kl_g_step": kl_g, "tr_mse_step": mse, "tr_cf_step": cf}, prog_bar=True, on_epoch=True,
+        self.log_dict({"tr_elbo": elbo, "tr_nll": nll, "tr_kl_l": kl_l, "tr_kl_g": kl_g, "tr_mse": mse, "tr_cf": cf}, prog_bar=True, on_epoch=True,
                         logger=True)
 
     def validation_step(self, batch, batch_idx):
         # this is the validation loop
-        print("VALIDATION")
         x, mask, y = batch
-        x = x.view(x.shape[0], x.shape[1], -1)
         print(x.shape)
+        print("VAL")
+        x = x.permute(0, 1, 4, 2, 3)
+        x = x.contiguous().view(-1, 8, 12288)
         #torch.Size([8, 8, 64, 64, 3])
-        print("NEXT")
         elbo, nll, kl_l, kl_g, cf, mse = self.elbo(x, mask)
         self.log_dict({"va_elbo": elbo, "va_nll": nll, "va_kl_l": kl_l, "va_kl_g": kl_g, "va_mse": mse, "va_cf": cf}, prog_bar=True, on_epoch=True,
                         logger=True)
@@ -149,6 +154,8 @@ class GLR(BaseModel):
         self.global_encoder = EncoderGlobal(self.input_size, self.global_size, 32, 3)
         self.conv_encoder = convEncoder(128, 3)
         self.conv_decoder = convDecoder(32 + 256, 3)
+        self.lin_encoder = nn.Linear(12288, 64)
+        self.lin_decoder = nn.Linear(64, 12288)
     def forward(self, x, mask, window_step=None):
         batch_size = x.size()[0]
         num_timesteps = x.size()[1]
@@ -158,12 +165,20 @@ class GLR(BaseModel):
         #conv_x = self.encoder_frame(x)
         #print("SHAPE AFTER CONV ENCODE")
         #print(conv_x.shape)
+
+        x = self.lin_encoder(x)
+        print("AFTER LIN ENCODE")
+        print(x.shape)
         h_l, global_dist = self.global_encoder(x)
         h_g, local_dist = self.local_encoder(x, window_step=window_step)
 
         z_t = self.dropout(local_dist.rsample())
         z_g = global_dist.rsample()
         x_hat_mean = self.decoder(z_t, z_g[:batch_size], output_len=self.window_size)
+        print("IMPORTANT SHAPE")
+        print(x_hat_mean.shape)
+        x_hat_mean = self.lin_decoder(x_hat_mean)
+        
         p_x_hat = D.Normal(x_hat_mean, 0.1)
         # p_x_hat = self.conv_decoder(p_x_hat)
         return p_x_hat, local_dist, global_dist, z_t, z_g
@@ -184,12 +199,12 @@ class GLR(BaseModel):
         x_shape = x.shape
         # (9000, 8, 64, 64, 3)
 
-        x = x.view(-1, 3, 64, 64)
+        x = x.contiguous().view(-1, 3, 64, 64)
         print("SHAPE BEFORE CONV ENCODE")
         print(x.shape)
         x_embed = self.conv_encoder(x)[0]
         # to [batch_size , frames, embed_dim]
-        return x_embed.view(x_shape[0], 8, -1) 
+        return x_embed.contiguous().view(x_shape[0], 8, -1) 
 
 
 class GLR_Original(BaseModel):
