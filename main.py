@@ -18,7 +18,7 @@ if __name__ == "__main__":
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
     torch.cuda.manual_seed(config["seed"])
-    version = f'1124_yes_windows_m{config["model"]}_d{config["dataset"]}_g{config["gamma"]}_s{config["seed"]}_n{config["normalization"]}_s{config["local_size"]}_g{config["global_size"]}_f{config["fold_ix"]}'
+    version = f'1124_conv_windows_m{config["model"]}_d{config["dataset"]}_g{config["gamma"]}_s{config["seed"]}_n{config["normalization"]}_s{config["local_size"]}_g{config["global_size"]}_f{config["fold_ix"]}'
     data_module = importlib.import_module('lib.data')
     dataset_type = getattr(data_module, config['dataset'])
     # The last two arguments are only used for fBIRN
@@ -27,7 +27,8 @@ if __name__ == "__main__":
     window_size, mask_windows, lr, num_timesteps = train_dataset.window_size, train_dataset.mask_windows, train_dataset.learning_rate, train_dataset.num_timesteps
     assert train_dataset.data_size == valid_dataset.data_size
     # config['input_size'] = train_dataset.data_size
-    config['input_size'] = 64
+    # config['input_size'] = 64 #for no conv
+    config['input_size'] = 128 #for conv 
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
     print(config['input_size'])
