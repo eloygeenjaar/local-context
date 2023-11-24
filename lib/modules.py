@@ -27,45 +27,16 @@ class EncoderLocal(nn.Module):
 
     def forward(self, x, mask=None, window_step=None):
         """Estimate the conditional posterior distribution of the local representation q(Z_l|X)"""
-        # zl_mean, zl_std, h_ts = [], [], []
+        zl_mean, zl_std, h_ts = [], [], []
         if window_step is None:
             window_step = self.window_size
-        h_t, h_T = self.gru(x)
-        print("after GRU")
-        print(h_T.shape)
-        h_T = torch.reshape(h_T.permute(1, 0, 2), (x.size(0), 16 * self.hidden_size))
-        features = self.mlp(h_T)
-        zl_mean = self.mu_layer(features)
-        zl_std = F.softplus(self.lv_layer(features))
-        h_ts = h_t
-        return h_t, D.Normal(zl_mean, 0.1)
-
-
-# after GRU
-# h_T: torch.Size([2, 64, 256])
-
-# X
-# torch.Size([64, 8, 64])
-
         # x_w is size: (batch_size, num_windows, input_size, window_size)
-        #torch.Size([64, 8, 64])
         x_w = x.unfold(1, self.window_size, window_step)
-        #torch.Size([64, 4, 64, 5])
         # Permute to: (batch_size, num_windows, window_size, input_size)
         x_w = x_w.permute(0, 1, 3, 2)
         for t in range(x_w.size(1)):
-# X_W[:,t]
-# torch.Size([64, 5, 64])
             h_t, h_T = self.gru(x_w[:, t])
-            print("h_T")
-            print(h_T.shape)
-# h_T
-# torch.Size([2, 64, 256])
-
             h_T = torch.reshape(h_T.permute(1, 0, 2), (x.size(0), 16 * self.hidden_size))
-# h_T
-# torch.Size([64, 512])
-
             features = self.mlp(h_T)
             zl_mean.append(self.mu_layer(features))
             zl_std.append(F.softplus(self.lv_layer(features)))
@@ -208,37 +179,16 @@ class WindowDecoder(nn.Module):
 
     def forward(self, z_t, z_g, output_len):
         """Estimate the sample likelihood distribution conditioned on the local and global representations q(X|z_g, Z_l)"""
-        batch_size, prior_len = z_t.size()
-        print("z_g and z_t")
-        print(z_g.size())
-        print(z_t.size())
+        batch_size, prior_len, _ = z_t.size()
         if z_g is not None:
-            z = torch.cat((z_t, z_g), dim = -1)
-            # z = torch.cat((z_t, z_g.unsqueeze(1).repeat(1, z_t.size(1), 1)), dim=-1)
+            z = torch.cat((z_t, z_g.unsqueeze(1).repeat(1, z_t.size(1), 1)), dim=-1)
         else:
             z = z_t
-        print("z before embedding")
-        print(z.shape)
-
         emb = self.embedding(z)
-        # recon_seq = []
+        recon_seq = []
         # For each window ...
-        in_x = torch.zeros((batch_size, 8, 1), device=z_t.device)
-        print('in X')
-        print(in_x.shape)
-        print("emb unsqueeze")
-        print(emb.unsqueeze(0).contiguous().shape)
-        recon_seq, _ = self.gru(in_x, emb.unsqueeze(0).contiguous())
-        print("recon_seq")
-        print(recon_seq.shape)
-        recon_seq = self.mlp(recon_seq)
-        print("recon_seq 2")
-        print(recon_seq.shape)
-        x_mean = self.mu_layer(recon_seq)
-        return x_mean
-
+        in_x = torch.zeros((batch_size, output_len, 1), device=z_t.device)
         for t in range(z_t.size(1)):
-
             rnn_out, _ = self.gru(in_x, emb[:, t].unsqueeze(0).contiguous())
             recon_seq.append(rnn_out)
         # Stitch windows together
@@ -248,7 +198,7 @@ class WindowDecoder(nn.Module):
         recon_seq = self.mlp(recon_seq)
         x_mean = self.mu_layer(recon_seq)
         return x_mean
-
+        
 class TransMLP(nn.Module):
     def __init__(self, input_size: int, hidden_size: int, dropout: float =0.):
         super().__init__()

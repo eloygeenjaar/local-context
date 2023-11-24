@@ -55,34 +55,20 @@ class BaseModel(pl.LightningModule):
             cf_loss = self.calc_cf_loss(x, x_hat_dist, pz_t, p_zg, z_t, z_g)
         else:
             cf_loss = torch.zeros((1, ), device=x.device)
-        print("ELBO X")
-        print(x.shape)
-
-
 
         # x_w is size: (batch_size, num_windows, input_size, window_size)
-        # x_w = x.unfold(1, self.window_size, self.window_step)
-        # print("UNFOLD")
-        # print(x_w.shape)
+        x_w = x.unfold(1, self.window_size, self.window_step)
         # # Permute to: (batch_size, num_windows, window_size, input_size)
-        # x_w = x_w.permute(0, 1, 3, 2)
-        # print("permute")
-        # print(x_w.shape)
-        # num_windows = x_w.size(1)
-        # x_w = torch.reshape(x_w, (batch_size, -1, input_size))
-        # print("reshape")
-        # print(x_w.shape)
-        x_w = x
+        x_w = x_w.permute(0, 1, 3, 2)
+        num_windows = x_w.size(1)
+        x_w = torch.reshape(x_w, (batch_size, -1, input_size))
         nll = -x_hat_dist.log_prob(x_w)  # shape=(M*batch_size, time, dimensions)
         # Prior is previous timestep -> smoothness
         pz = D.Normal(pz_t.mean[:, :-1], pz_t.stddev[:, :-1])
         pz_t = D.Normal(pz_t.mean[:, 1:], pz_t.stddev[:, 1:])
         kl_l = D.kl.kl_divergence(pz_t, pz) #/ (x.size(1) // self.window_size)
         #kl_l = kl_l.sum(1).mean(-1)  # shape=(M*batch_size, time, dimensions)
-        print("KLL NLL SHAPE")
-        print(kl_l.shape)
-        print(nll.shape)
-        kl_l = kl_l.mean(dim=(1))
+        kl_l = kl_l.mean(dim=(1, 2))
         # I use the inverse of the original mask
         #nll = torch.where(mask==0, torch.zeros_like(nll), nll)
 
