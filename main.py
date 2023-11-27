@@ -22,26 +22,32 @@ if __name__ == "__main__":
     data_module = importlib.import_module('lib.data')
     dataset_type = getattr(data_module, config['dataset'])
     # The last two arguments are only used for fBIRN
-    train_dataset = dataset_type('train', config['normalization'], config["seed"], config['num_folds'], config['fold_ix'])
-    valid_dataset = dataset_type('valid', config['normalization'], config["seed"], config['num_folds'], config['fold_ix'])
-    window_size, mask_windows, lr, num_timesteps = train_dataset.window_size, train_dataset.mask_windows, train_dataset.learning_rate, train_dataset.num_timesteps
+    train_dataset = dataset_type('train', config['seed'])
+    valid_dataset = dataset_type('valid', config['seed'])
+    data_size, lr = train_dataset.data_size, train_dataset.learning_rate
     assert train_dataset.data_size == valid_dataset.data_size
     config['input_size'] = train_dataset.data_size
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
-    model = model_type(config["input_size"], config["local_size"], config["global_size"], num_timesteps,
-                       window_size=window_size, beta=config["beta"], gamma=config["gamma"],
-                       mask_windows=mask_windows, lr=lr, seed=config['seed'])
+    model = model_type(
+        input_size=data_size,
+        local_size=config['local_size'],
+        global_size=config['global_size'],
+        beta=config['beta'],
+        gamma=config['gamma'],
+        lr=lr,
+        seed=config['seed'])
     tb_logger = TensorBoardLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
     csv_logger = CSVLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
-    checkpoint_callback = ModelCheckpoint(filename="best", save_last=False, monitor="va_elbo")
-    early_stopping = EarlyStopping(monitor="va_elbo", patience=20, mode="min")
+    checkpoint_callback = ModelCheckpoint(filename="best", save_last=False, monitor="va_loss")
+    early_stopping = EarlyStopping(monitor="va_loss", patience=20, mode="min")
     trainer = pl.Trainer(max_epochs=200, logger=[tb_logger, csv_logger],
-                         callbacks=[checkpoint_callback, early_stopping], devices=1)
+                         callbacks=[checkpoint_callback, early_stopping], devices=1,
+                         detect_anomaly=True)
     train_loader = DataLoader(train_dataset, num_workers=5, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=True,
                               persistent_workers=True, prefetch_factor=5, drop_last=True)
     valid_loader = DataLoader(valid_dataset, num_workers=5, pin_memory=True,
-                              batch_size=config["batch_size"], shuffle=False,
+                              batch_size=1024, shuffle=True,
                               persistent_workers=True, prefetch_factor=5, drop_last=False)
     trainer.fit(model, train_loader, valid_loader)
