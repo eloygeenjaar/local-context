@@ -7,7 +7,7 @@ from rotary_embedding_torch import RotaryEmbedding
 from einops import rearrange, repeat, pack, unpack
 
 
-class TemporalEncoderClassic(nn.Module):
+class TemporalEncoder(nn.Module):
     def __init__(self, input_size, local_size, global_size):
         """Initializes the instance"""
         super().__init__()
@@ -52,7 +52,7 @@ class TemporalEncoderClassic(nn.Module):
         z = torch.cat((local_z, global_z), dim=-1)
         return global_dist, local_dist, prior_dist, z
 
-class TemporalEncoder(nn.Module):
+class TemporalEncoderC(nn.Module):
     def __init__(self, input_size, local_size, global_size):
         """Initializes the instance"""
         super().__init__()

@@ -17,7 +17,7 @@ c_means = np.array(
      [2, -0.5],
      [6, 0.5]]
 )
-sz_means = c_means + np.array([0, 2.0])
+sz_means = c_means + np.array([0, 1.0])
 data_ls, states_ls, latent_ls = [], [], []
 W = rng.normal(size=(3, 53))
 covars = np.ones((4, 2)) * 1.0

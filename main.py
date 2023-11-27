@@ -41,7 +41,7 @@ if __name__ == "__main__":
     csv_logger = CSVLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
     checkpoint_callback = ModelCheckpoint(filename="best", save_last=False, monitor="va_loss")
     early_stopping = EarlyStopping(monitor="va_loss", patience=20, mode="min")
-    trainer = pl.Trainer(max_epochs=200, logger=[tb_logger, csv_logger],
+    trainer = pl.Trainer(max_epochs=500, logger=[tb_logger, csv_logger],
                          callbacks=[checkpoint_callback, early_stopping], devices=1,
                          detect_anomaly=True)
     train_loader = DataLoader(train_dataset, num_workers=5, pin_memory=True,

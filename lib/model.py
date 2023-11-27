@@ -101,6 +101,7 @@ class BaseModel(pl.LightningModule):
         axs[1].set_ylabel('Latent dimension 2')
         axs[1].set_title('Local representations')
         axs[1].axis('equal')
+        plt.tight_layout()
         plt.savefig(f'{self.logger.save_dir}/global.png', dpi=200)
         #plt.savefig(f'{self.logger.save_dir}/{self.logger.version}/global.png', dpi=200)
         plt.clf()
