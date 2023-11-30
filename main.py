@@ -18,7 +18,7 @@ if __name__ == "__main__":
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
     torch.cuda.manual_seed(config["seed"])
-    version = f'm{config["model"]}_d{config["dataset"]}_g{config["gamma"]}_s{config["seed"]}_n{config["normalization"]}_s{config["local_size"]}_g{config["global_size"]}_f{config["fold_ix"]}'
+    version = f'm{config["model"]}_d{config["dataset"]}_s{config["seed"]}_s{config["local_size"]}_g{config["global_size"]}_nl{config["num_layers"]}'
     data_module = importlib.import_module('lib.data')
     dataset_type = getattr(data_module, config['dataset'])
     # The last two arguments are only used for fBIRN
@@ -40,14 +40,14 @@ if __name__ == "__main__":
     tb_logger = TensorBoardLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
     csv_logger = CSVLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
     checkpoint_callback = ModelCheckpoint(filename="best", save_last=False, monitor="va_loss")
-    early_stopping = EarlyStopping(monitor="va_loss", patience=20, mode="min")
-    trainer = pl.Trainer(max_epochs=500, logger=[tb_logger, csv_logger],
+    early_stopping = EarlyStopping(monitor="va_loss", patience=50, mode="min")
+    trainer = pl.Trainer(max_epochs=750, logger=[tb_logger, csv_logger],
                          callbacks=[checkpoint_callback, early_stopping], devices=1,
                          detect_anomaly=True)
     train_loader = DataLoader(train_dataset, num_workers=5, pin_memory=True,
                               batch_size=config["batch_size"], shuffle=True,
                               persistent_workers=True, prefetch_factor=5, drop_last=True)
     valid_loader = DataLoader(valid_dataset, num_workers=5, pin_memory=True,
-                              batch_size=1024, shuffle=True,
+                              batch_size=2048, shuffle=False,
                               persistent_workers=True, prefetch_factor=5, drop_last=False)
     trainer.fit(model, train_loader, valid_loader)

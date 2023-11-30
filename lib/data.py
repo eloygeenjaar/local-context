@@ -24,118 +24,13 @@ comp_ix = [68, 52, 97, 98, 44,
             12, 17, 3, 6]
 
 
-class fBIRN(Dataset):
-    def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
-        super().__init__()
-        self.data_type = data_type
-        self.seed = seed
-
-        train_df, valid_df, test_df = get_fbirn(seed, fold_ix, num_folds)
-
-        if data_type == 'train':
-            self.df = train_df.copy()
-        elif data_type == 'valid':
-            self.df = valid_df.copy()
-        else:
-            self.df = test_df.copy()
-        self.indices = self.df.index.values
-
-        data = []
-        print(f'Loading {data_type} data')
-        for (i, row) in tqdm(self.df.iterrows(), total=self.df.shape[0]):
-            x = np.transpose(nb.load(row['path']).get_fdata(), (3, 0, 1, 2))
-            sd_mask = x.std(0) != 0
-            x[:, sd_mask] -= x[:, sd_mask].mean(0)
-            x[:, sd_mask] /= x[:, sd_mask].std(0)
-            x_pad = np.pad(x, ((2, 1), (6, 5), (1, 0), (6, 6)), mode="constant", constant_values=0)
-            data.append(x_pad.astype(np.float16))
-        self.X = np.stack(data, axis=0)
-        self.mask = F.pad(torch.ones(x.shape), (6, 6, 1, 0, 6, 5, 2, 1), "constant", 0).bool()
-
-    def __len__(self):
-        return self.df.shape[0]
-
-    def __getitem__(self, ix):
-        x = torch.from_numpy(self.X[ix]).float()
-        return x.view(x.size(0), -1).float(), self.mask, (torch.zeros((1, )), self.df.loc[self.indices[ix], 'diagnosis'])
-
-    @property
-    def data_size(self):
-        return 128
-
-    @property
-    def num_classes(self):
-        return 2
-
-    @property
-    def window_size(self):
-        return 10
-
-    @property
-    def mask_windows(self):
-        return 4
-
-    @property
-    def learning_rate(self):
-        return 0.001
-
-class ICAUKBiobank(Dataset):
-    def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
-        super().__init__()
-        self.data_type = data_type
-        self.seed = seed
-
-        train_df, valid_df, test_df = get_icaukbb(seed)
-
-        if data_type == 'train':
-            self.df = train_df.copy()
-        elif data_type == 'valid':
-            self.df = valid_df.copy()
-        else:
-            self.df = test_df.copy()
-
-        self.indices = self.df.index.values
-        self.mask = torch.ones((100, 53)).bool()
-
-    def __len__(self):
-        return self.df.shape[0]
-
-    def __getitem__(self, ix):
-        x = nb.load(self.df.loc[self.indices[ix], 'path']).get_fdata()[:100, comp_ix]
-        # TR from: https://biobank.ctsu.ox.ac.uk/crystal/crystal/docs/brain_mri.pdf
-        x = signal.clean(x, detrend=True,
-            standardize='zscore_sample', t_r=0.735,
-            low_pass=0.15, high_pass=0.01)
-        x = torch.from_numpy(x).float()
-        return x.view(x.size(0), -1).float(), self.mask, (0, self.df.loc[self.indices[ix], 'sex'])
-
-    @property
-    def data_size(self):
-        return 53
-
-    @property
-    def num_classes(self):
-        return 2
-
-    @property
-    def window_size(self):
-        return 10
-
-    @property
-    def mask_windows(self):
-        return 4
-
-    @property
-    def learning_rate(self):
-        return 0.001
-
 class ICAfBIRN(Dataset):
-    def __init__(self, data_type, normalization, seed, num_folds, fold_ix):
+    def __init__(self, data_type, seed):
         super().__init__()
         self.data_type = data_type
         self.seed = seed
 
-        train_df, valid_df, test_df = get_icafbirn(seed)
+        train_df, valid_df, test_df = get_icafbirn(42)
 
         if data_type == 'train':
             self.df = train_df.copy()
@@ -145,46 +40,39 @@ class ICAfBIRN(Dataset):
             self.df = test_df.copy()
 
         self.indices = self.df.index.values
-        self.mask = torch.ones((150, 53)).bool()
+        self.window_size = 20
+        self.num_timesteps = 150
+        self.step = 10
+        self.num_windows = (((self.num_timesteps - self.window_size) // self.step) + 1)
+        self.num_subjects = self.df.shape[0]
 
     def __len__(self):
-        return self.df.shape[0]
+        return self.num_subjects * self.num_windows
 
     def __getitem__(self, ix):
-        x = nb.load(self.df.loc[self.indices[ix], 'path']).get_fdata()[:150, comp_ix]
-        # TR from: https://biobank.ctsu.ox.ac.uk/crystal/crystal/docs/brain_mri.pdf
-        #x = signal.clean(x, detrend=True,
-        #    standardize='zscore_sample', t_r=2.0,
-        #    low_pass=0.15, high_pass=0.01)
+        subj_ix = ix // self.num_windows
+        x = nb.load(self.df.loc[self.indices[subj_ix], 'path']).get_fdata()[:150, comp_ix]
         x = signal.clean(x, detrend=True,
             standardize='zscore_sample', t_r=2.0,
-            low_pass=None, high_pass=None)
+            low_pass=0.15, high_pass=0.008)
         x = torch.from_numpy(x).float()
-        return x.view(x.size(0), -1).float(), torch.Tensor([ix]).long(), (0, self.df.loc[self.indices[ix], 'sz'])
+        y = self.df.loc[self.indices[subj_ix], 'sz'] == 2
+        temp_ix = ix % self.num_windows
+        min_pos_ix = max(0, temp_ix - 1, temp_ix - 2)
+        max_pos_ix = min(self.num_windows-1, temp_ix+1, temp_ix+2)
+        pos_ix = np.random.choice(np.array([min_pos_ix, max_pos_ix]))
+        return (x[(temp_ix * self.step):((temp_ix * self.step) + self.window_size)],
+                x[(pos_ix * self.step):((pos_ix * self.step) + self.window_size)], 
+                (subj_ix, temp_ix),
+                y)
 
     @property
     def data_size(self):
         return 53
 
     @property
-    def num_classes(self):
-        return 2
-
-    @property
-    def window_size(self):
-        return 20
-
-    @property
-    def mask_windows(self):
-        return 4
-
-    @property
     def learning_rate(self):
-        return 0.0005
-
-    @property
-    def num_timesteps(self):
-        return 150
+        return 0.001
 
 class Simulation(Dataset):
     def __init__(self, data_type, seed):
@@ -200,7 +88,7 @@ class Simulation(Dataset):
     def __getitem__(self, ix):
         subj_ix = ix // (self.data.shape[1] // 20)
         temp_ix = ix % (self.data.shape[1] // 20)
-        return self.data[subj_ix, (temp_ix * 20):((temp_ix + 1) * 20)], self.targets[subj_ix]
+        return self.data[subj_ix, (temp_ix * 20):((temp_ix + 1) * 20)], (subj_ix, temp_ix), self.targets[subj_ix]
 
     @property
     def data_size(self):
