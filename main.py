@@ -18,7 +18,7 @@ if __name__ == "__main__":
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
     torch.cuda.manual_seed(config["seed"])
-    version = f'm{config["model"]}_d{config["dataset"]}_s{config["seed"]}_s{config["local_size"]}_g{config["global_size"]}_nl{config["num_layers"]}'
+    version = f'm{config["model"]}_d{config["dataset"]}_s{config["seed"]}_s{config["local_size"]}_g{config["global_size"]}_nl{config["num_layers"]}_lr{config["lr"]}'
     data_module = importlib.import_module('lib.data')
     dataset_type = getattr(data_module, config['dataset'])
     # The last two arguments are only used for fBIRN
