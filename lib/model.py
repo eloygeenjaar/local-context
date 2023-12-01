@@ -26,8 +26,9 @@ class BaseModel(pl.LightningModule):
         self.global_size = global_size
         self.input_size = input_size
         self.spatial_decoder = nn.Sequential(
-            nn.Linear(local_size + global_size, 64), nn.Tanh(),
-            nn.Linear(64, input_size),
+            nn.Linear(local_size + global_size, 128), nn.ELU(),
+            nn.Linear(128, 128), nn.ELU(),
+            nn.Linear(128, input_size),
         )
         self.lr = lr
         self.seed = seed

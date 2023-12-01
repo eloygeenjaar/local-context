@@ -42,7 +42,7 @@ class ICAfBIRN(Dataset):
         self.indices = self.df.index.values
         self.window_size = 20
         self.num_timesteps = 150
-        self.step = 10
+        self.step = 5
         self.num_windows = (((self.num_timesteps - self.window_size) // self.step) + 1)
         self.num_subjects = self.df.shape[0]
         self.data = []
