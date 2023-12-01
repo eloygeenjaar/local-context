@@ -45,17 +45,23 @@ class ICAfBIRN(Dataset):
         self.step = 10
         self.num_windows = (((self.num_timesteps - self.window_size) // self.step) + 1)
         self.num_subjects = self.df.shape[0]
+        self.data = []
+        for (i, row) in self.df.iterrows():
+            x = nb.load(row['path']).get_fdata()[:150, comp_ix]
+            x = signal.clean(x, detrend=True,
+            standardize='zscore_sample', t_r=2.0,
+            low_pass=0.15, high_pass=0.008)
+            self.data.append(x)
+        self.data = np.stack(self.data, axis=0)
+        self.data = torch.from_numpy(self.data)
 
     def __len__(self):
         return self.num_subjects * self.num_windows
 
     def __getitem__(self, ix):
         subj_ix = ix // self.num_windows
-        x = nb.load(self.df.loc[self.indices[subj_ix], 'path']).get_fdata()[:150, comp_ix]
-        x = signal.clean(x, detrend=True,
-            standardize='zscore_sample', t_r=2.0,
-            low_pass=0.15, high_pass=0.008)
-        x = torch.from_numpy(x).float()
+        x = self.data[subj_ix]
+        x = x.float()
         y = self.df.loc[self.indices[subj_ix], 'sz'] == 2
         temp_ix = ix % self.num_windows
         min_pos_ix = max(0, temp_ix - 1, temp_ix - 2)

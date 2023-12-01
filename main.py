@@ -24,7 +24,7 @@ if __name__ == "__main__":
     # The last two arguments are only used for fBIRN
     train_dataset = dataset_type('train', config['seed'])
     valid_dataset = dataset_type('valid', config['seed'])
-    data_size, lr = train_dataset.data_size, train_dataset.learning_rate
+    data_size = train_dataset.data_size
     assert train_dataset.data_size == valid_dataset.data_size
     config['input_size'] = train_dataset.data_size
     model_module = importlib.import_module('lib.model')
@@ -35,7 +35,7 @@ if __name__ == "__main__":
         global_size=config['global_size'],
         beta=config['beta'],
         gamma=config['gamma'],
-        lr=lr,
+        lr=config['lr'],
         seed=config['seed'])
     tb_logger = TensorBoardLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
     csv_logger = CSVLogger(save_dir=os.getcwd(), version=version, name="lightning_logs")
