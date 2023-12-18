@@ -442,52 +442,20 @@ def embed_data(device, model, train_dataset, valid_dataset, test_dataset):
             (x_valid, x_va_time, y_valid),
             (x_test, x_te_time, y_test))
     
-def embed_global_data(device, model, train_dataset, valid_dataset, test_dataset):
-    train_dataloader = DataLoader(train_dataset, batch_size=8, shuffle=False,
+def embed_global_data(device, model, dataset):
+    dataloader = DataLoader(dataset, batch_size=8, shuffle=False,
                             num_workers=5)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=8, shuffle=False,
-                            num_workers=5)
-    test_dataloader = DataLoader(test_dataset, batch_size=8, shuffle=False,
-                            num_workers=5)
-    y_train, embedding_train = [], []
-    for (i, batch) in enumerate(train_dataloader):
-        x, mask, (y_local, y_global) = batch
+    global_embeddings = torch.empty((dataset.num_subjects, dataset.num_windows, model.global_size))
+    ys = torch.empty((dataset.num_subjects, ), dtype=bool)
+    for (i, batch) in enumerate(dataloader):
+        x, _, (subj_ix, temp_ix), y = batch
+        x = x.permute(1, 0, 2)
         x = x.to(device, non_blocking=True)
         with torch.no_grad():
-            _, global_dist = model.global_encoder(x)
-        y_train.append(y_global.cpu())
-        embedding_train.append(global_dist.mean[:x.size(0)].cpu())
-
-    y_train = torch.cat(y_train, dim=0).numpy()
-    x_train = torch.cat(embedding_train, dim=0).numpy()
-
-    y_valid, embedding_valid = [], []
-    for (i, batch) in enumerate(valid_dataloader):
-        x, mask, (y_local, y_global) = batch
-        x = x.to(device, non_blocking=True)
-        with torch.no_grad():
-            _, global_dist = model.global_encoder(x)
-        y_valid.append(y_global.cpu())
-        embedding_valid.append(global_dist.mean[:x.size(0)].cpu())
-
-    y_valid = torch.cat(y_valid, dim=0).numpy()
-    x_valid = torch.cat(embedding_valid, dim=0).numpy()
-
-    y_test, embedding_test = [], []
-    for (i, batch) in enumerate(test_dataloader):
-        x, mask, (y_local, y_global) = batch
-        x = x.to(device, non_blocking=True)
-        with torch.no_grad():
-            _, global_dist = model.global_encoder(x)
-        y_test.append(y_global.cpu())
-        embedding_test.append(global_dist.mean[:x.size(0)].cpu())
-
-    y_test = torch.cat(y_test, dim=0).numpy()
-    x_test = torch.cat(embedding_test, dim=0).numpy()
-
-    return ((x_train, y_train),
-            (x_valid, y_valid),
-            (x_test, y_test))
+            global_dist = model.embed_global(x)
+        global_embeddings[subj_ix, temp_ix] = global_dist.mean.cpu()
+        ys[subj_ix] = y.cpu()
+    return global_embeddings, ys
 
 # Adapted from: https://github.com/googleinterns/local_global_ts_representation/blob/main/gl_rep/data_loaders.py
 def normalize_signals(signals, masks, inds):
