@@ -2,3 +2,5 @@
 */__pycache__
 results
 figures
+*.png
+lightning_logs
