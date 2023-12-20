@@ -122,13 +122,13 @@ class Simulation(Dataset):
         end_window = start_window + self.window_size
         return (
             self.data[subj_ix, start_window:end_window],
+            self.data[subj_ix, start_window:end_window],
             (subj_ix, temp_ix),
             self.targets[subj_ix])
 
     @property
     def data_size(self):
         return 53
-
 
 
 class Test(Dataset):
@@ -139,7 +139,8 @@ class Test(Dataset):
         self.seed = seed
         self.window_size = window_size
         self.window_step = window_step
-        self.data = torch.randn((10, 100, len(comp_ix)))
+        self.data = torch.randn((50, 100, len(comp_ix)))
+        self.targets = torch.randint(low=0, high=2, size=(50, ))
 
     def __len__(self):
         return self.data.shape[0] * (
@@ -153,6 +154,7 @@ class Test(Dataset):
         start_window = temp_ix * self.window_step
         end_window = start_window + self.window_size
         return (
+            self.data[subj_ix, start_window:end_window],
             self.data[subj_ix, start_window:end_window],
             (subj_ix, temp_ix),
             self.targets[subj_ix])
