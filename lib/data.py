@@ -91,10 +91,6 @@ class ICAfBIRN(Dataset):
     def data_size(self):
         return 53
 
-    @property
-    def learning_rate(self):
-        return 0.001
-
 
 class Simulation(Dataset):
     def __init__(self, data_type: str, seed: int,
@@ -133,9 +129,6 @@ class Simulation(Dataset):
     def data_size(self):
         return 53
 
-    @property
-    def learning_rate(self):
-        return 0.001
 
 
 class Test(Dataset):
@@ -167,7 +160,3 @@ class Test(Dataset):
     @property
     def data_size(self):
         return len(comp_ix)
-
-    @property
-    def learning_rate(self):
-        return 0.001
