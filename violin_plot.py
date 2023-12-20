@@ -25,6 +25,6 @@ ax.set_ylabel('Window classification accuracy')
 # Set the colors for LVAE and wFNC
 colors = ['#93278F', '#0071BC', '#03A678']
 for (patch, color) in zip(bplot['boxes'], colors):
-        patch.set(facecolor=color)
+    patch.set(facecolor=color)
 plt.tight_layout()
 plt.savefig('figures/boxplot.png', dpi=300)
