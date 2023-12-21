@@ -29,11 +29,11 @@ if __name__ == "__main__":
         "num_layers": tune.choice([1, 2, 3, 4]),
         "spatial_hidden_size": tune.choice([32, 64, 128, 256]),
         "temporal_hidden_size": tune.choice([128, 256, 512]),
-        "lr": tune.loguniform(1e-4, 1e-2),
+        "lr": tune.loguniform(1e-4, 2e-3),
         "batch_size": tune.choice([32, 64, 128, 256]),
         "beta": tune.loguniform(1e-5, 1e-3),
         "gamma": tune.loguniform(1e-5, 1e-3),
-        "theta": tune.loguniform(1e-5, 1e-3)}
+        "theta": tune.loguniform(1e-7, 1e-3) if 'Cont' in config['model'] else tune.choice([0])}
     }
     version = generate_version_name(config)
     data_module = importlib.import_module('lib.data')
@@ -66,9 +66,7 @@ if __name__ == "__main__":
         trainer = ray.train.lightning.prepare_trainer(trainer)
         trainer.fit(model, datamodule=dm)
 
-    perturbation_interval = 5
-    # TODO: Can also try to use Population Based Bandits (PB2)
-    # See: https://docs.ray.io/en/latest/tune/api/schedulers.html
+    perturbation_interval = 10
     scheduler = PB2(
         time_attr="training_iteration",
         perturbation_interval=perturbation_interval,
@@ -79,11 +77,11 @@ if __name__ == "__main__":
             "num_layers": [1, 4],
             "spatial_hidden_size": [32, 256],
             "temporal_hidden_size": [128, 512],
-            "lr": [1e-4, 1e-2],
+            "lr": [1e-4, 2e-3],
             "batch_size": [32, 256],
             "beta": [1e-5, 1e-3],
             "gamma": [1e-5, 1e-3],
-            "theta": [1e-5, 1e-3]}},
+            "theta": [1e-7, 1e-3] if 'Cont' in config['model'] else [0, 0]}},
     )
 
     ray_trainer = TorchTrainer(

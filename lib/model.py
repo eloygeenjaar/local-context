@@ -3,7 +3,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from ray import train
-from torch import optim
+from torch import nn, optim
 from info_nce import InfoNCE
 import lightning.pytorch as pl
 from torch import distributions as D
@@ -101,11 +101,13 @@ class BaseModel(pl.LightningModule):
         # Optimization
         opt.zero_grad()
         self.manual_backward(loss)
+        nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
         opt.step()
         self.anneal = min(1.0, self.anneal + 1/5000)
         train_dict = {f'tr_{l_key}': output[l_key] for l_key in self.loss_keys}
         train_dict['tr_loss'] = loss.detach()
-        self.log_dict(train_dict, prog_bar=True, on_epoch=True, logger=True, sync_dist=True)
+        self.log_dict(train_dict, on_step=False, prog_bar=False,
+                      on_epoch=True, logger=False, sync_dist=True)
 
     def validation_step(self, batch, batch_idx):
         # this is the validation loop
@@ -122,7 +124,8 @@ class BaseModel(pl.LightningModule):
         va_dict = {f'va_{l_key}': output[l_key] for l_key in self.loss_keys}
         va_dict['va_acc'] = acc
         va_dict['va_loss'] = loss.detach()
-        self.log_dict(va_dict, prog_bar=True, on_epoch=True, logger=True, sync_dist=True)
+        self.log_dict(va_dict, on_step=False, prog_bar=False,
+                      on_epoch=True, logger=False, sync_dist=True)
         if self.viz:# Visualize representations
             if context_z.shape[-1] > 2:
                 pca = PCA(n_components=2)

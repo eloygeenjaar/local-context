@@ -172,13 +172,13 @@ class DataModule(pl.LightningDataModule):
     def train_dataloader(self):
         return DataLoader(self.train_dataset, num_workers=5, pin_memory=True,
                           batch_size=self.config["batch_size"], shuffle=True,
-                          persistent_workers=True, prefetch_factor=5, drop_last=True)
+                          persistent_workers=True, prefetch_factor=5, drop_last=False)
 
     def val_dataloader(self):
         return DataLoader(self.valid_dataset, num_workers=5, pin_memory=True,
-                          batch_size=self.config["batch_size"], shuffle=True,
-                          persistent_workers=True, prefetch_factor=5, drop_last=True)
+                          batch_size=self.config["batch_size"] * 4, shuffle=False,
+                          persistent_workers=True, prefetch_factor=5, drop_last=False)
     def test_dataloader(self):
         return DataLoader(self.test_dataset, num_workers=5, pin_memory=True,
-                          batch_size=self.config["batch_size"], shuffle=True,
-                          persistent_workers=True, prefetch_factor=5, drop_last=True)
+                          batch_size=self.config["batch_size"], shuffle=False,
+                          persistent_workers=True, prefetch_factor=5, drop_last=False)
