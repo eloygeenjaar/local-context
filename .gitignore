@@ -5,3 +5,4 @@ figures
 *.png
 lightning_logs
 ray_results
+configs/config_*

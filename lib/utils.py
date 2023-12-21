@@ -35,7 +35,7 @@ def embed_context(device, model, dataset):
 
 
 def get_icafbirn(seed):
-    df = pd.read_csv('./data/ica_fbirn/info_df.csv', index_col=0)
+    df = pd.read_csv('/data/users1/egeenjaar/local-global/data/ica_fbirn/info_df.csv', index_col=0)
     trainval_index, test_index = train_test_split(
         df.index.values, train_size=0.8, random_state=seed, stratify=df['sex'])
     train_index, valid_index = train_test_split(

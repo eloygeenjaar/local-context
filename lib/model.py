@@ -2,6 +2,7 @@ import torch
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from ray import train
 from torch import optim
 from info_nce import InfoNCE
 import lightning.pytorch as pl
@@ -14,7 +15,7 @@ from sklearn.linear_model import LogisticRegression
 
 
 class BaseModel(pl.LightningModule):
-    def __init__(self, config, hyperparameters):
+    def __init__(self, config, hyperparameters, viz):
         super().__init__()
         self.local_size = config['local_size']
         self.context_size = config['context_size']
@@ -33,6 +34,7 @@ class BaseModel(pl.LightningModule):
         self.gamma = hyperparameters['gamma']
         self.theta = hyperparameters['theta']
         self.anneal = 0.0
+        self.viz = viz
         self.loss_keys = [
             'mse',
             'kl_l',
@@ -103,7 +105,7 @@ class BaseModel(pl.LightningModule):
         self.anneal = min(1.0, self.anneal + 1/5000)
         train_dict = {f'tr_{l_key}': output[l_key] for l_key in self.loss_keys}
         train_dict['tr_loss'] = loss.detach()
-        self.log_dict(train_dict, prog_bar=True, on_epoch=True, logger=True)
+        self.log_dict(train_dict, prog_bar=True, on_epoch=True, logger=True, sync_dist=True)
 
     def validation_step(self, batch, batch_idx):
         # this is the validation loop
@@ -120,38 +122,38 @@ class BaseModel(pl.LightningModule):
         va_dict = {f'va_{l_key}': output[l_key] for l_key in self.loss_keys}
         va_dict['va_acc'] = acc
         va_dict['va_loss'] = loss.detach()
-        self.log_dict(va_dict, prog_bar=True, on_epoch=True, logger=True)
-        # Visualize representations
-        if context_z.shape[-1] > 2:
-            pca = PCA(n_components=2)
-            context_z = pca.fit_transform(context_z)
-        fig, axs = plt.subplots(1, 2)
-        axs[0].scatter(context_z[y == 0, 0], context_z[y == 0, 1],
-                       color='b', alpha=0.5)
-        axs[0].scatter(context_z[y == 1, 0], context_z[y == 1, 1],
-                       color='r', alpha=0.5)
-        axs[0].set_xlabel('Latent dimension 1')
-        axs[0].set_ylabel('Latent dimension 2')
-        axs[0].set_title('Context representations')
-        axs[0].axis('equal')
-        axs[1].scatter(local_z[:, y == 0, ..., 0].flatten(),
-                       local_z[:, y == 0, ..., 1].flatten(),
-                       color='b', alpha=0.2)
-        axs[1].scatter(local_z[:, y == 1, ..., 0].flatten(),
-                       local_z[:, y == 1, ..., 1].flatten(),
-                       color='r', alpha=0.2)
-        axs[1].set_xlabel('Latent dimension 1')
-        axs[1].set_ylabel('Latent dimension 2')
-        axs[1].set_title('Local representations')
-        axs[1].axis('equal')
-        plt.tight_layout()
-        plt.savefig(f'{self.logger.save_dir}/context.png', dpi=200)
-        # TODO": save these files in the specific lightning_logs dir
-        # (low priority)
-        # plt.savefig(
-        # f'{self.logger.save_dir}/{self.logger.version}/context.png', dpi=200)
-        plt.clf()
-        plt.close(fig)
+        self.log_dict(va_dict, prog_bar=True, on_epoch=True, logger=True, sync_dist=True)
+        if self.viz:# Visualize representations
+            if context_z.shape[-1] > 2:
+                pca = PCA(n_components=2)
+                context_z = pca.fit_transform(context_z)
+            fig, axs = plt.subplots(1, 2)
+            axs[0].scatter(context_z[y == 0, 0], context_z[y == 0, 1],
+                        color='b', alpha=0.5)
+            axs[0].scatter(context_z[y == 1, 0], context_z[y == 1, 1],
+                        color='r', alpha=0.5)
+            axs[0].set_xlabel('Latent dimension 1')
+            axs[0].set_ylabel('Latent dimension 2')
+            axs[0].set_title('Context representations')
+            axs[0].axis('equal')
+            axs[1].scatter(local_z[:, y == 0, ..., 0].flatten(),
+                        local_z[:, y == 0, ..., 1].flatten(),
+                        color='b', alpha=0.2)
+            axs[1].scatter(local_z[:, y == 1, ..., 0].flatten(),
+                        local_z[:, y == 1, ..., 1].flatten(),
+                        color='r', alpha=0.2)
+            axs[1].set_xlabel('Latent dimension 1')
+            axs[1].set_ylabel('Latent dimension 2')
+            axs[1].set_title('Local representations')
+            axs[1].axis('equal')
+            plt.tight_layout()
+            plt.savefig(f'{self.logger.save_dir}/context.png', dpi=200)
+            # TODO": save these files in the specific lightning_logs dir
+            # (low priority)
+            # plt.savefig(
+            # f'{self.logger.save_dir}/{self.logger.version}/context.png', dpi=200)
+            plt.clf()
+            plt.close(fig)
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr)
