@@ -1,8 +1,9 @@
-dataset: Test
+dataset: ICAfBIRN
 model: DSVAE
 
 local_size: 2
-context_size: 2
+context_size: 4
+contrastive_dim: 0
 
 num_layers: 3
 spatial_hidden_size: 128
@@ -15,5 +16,6 @@ theta: 0.0
 batch_size: 64
 seed: 42
 
+data_size: 53
 window_size: 20
 window_step: 5

@@ -1,9 +1,11 @@
 import torch
 import numpy as np
 import nibabel as nb
+import lightning.pytorch as pl
 from nilearn import signal
-from torch.utils.data import Dataset
 from lib.utils import get_icafbirn
+from torch.utils.data import Dataset, DataLoader
+
 
 comp_ix = [
     68, 52, 97, 98, 44,
@@ -42,7 +44,7 @@ class ICAfBIRN(Dataset):
 
         # Formula to calculate the number of windows fit in a timeseries
         self.num_windows = (((self.num_timesteps - self.window_size)
-                             // self.step) + 1)
+                             // self.window_step) + 1)
 
         # Preprocessing the data
         self.data = []
@@ -87,10 +89,6 @@ class ICAfBIRN(Dataset):
             (subj_ix, temp_ix),
             y)
 
-    @property
-    def data_size(self):
-        return 53
-
 
 class Simulation(Dataset):
     def __init__(self, data_type: str, seed: int,
@@ -126,10 +124,6 @@ class Simulation(Dataset):
             (subj_ix, temp_ix),
             self.targets[subj_ix])
 
-    @property
-    def data_size(self):
-        return 53
-
 
 class Test(Dataset):
     def __init__(self, data_type: str, seed: int,
@@ -159,6 +153,32 @@ class Test(Dataset):
             (subj_ix, temp_ix),
             self.targets[subj_ix])
 
-    @property
-    def data_size(self):
-        return len(comp_ix)
+
+class DataModule(pl.LightningDataModule):
+    def __init__(self, config, dataset_type, batch_size=128):
+        super().__init__()
+        self.config = config
+        self.dataset_type = dataset_type
+        self.batch_size = batch_size
+
+    def setup(self, stage=None):
+        self.train_dataset = self.dataset_type(
+            'train', self.config['seed'], self.config['window_size'], self.config['window_step'])
+        self.valid_dataset = self.dataset_type(
+            'valid', self.config['seed'], self.config['window_size'], self.config['window_step'])
+        self.test_dataset = self.dataset_type(
+            'test', self.config['seed'], self.config['window_size'], self.config['window_step'])
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, num_workers=5, pin_memory=True,
+                          batch_size=self.config["batch_size"], shuffle=True,
+                          persistent_workers=True, prefetch_factor=5, drop_last=False)
+
+    def val_dataloader(self):
+        return DataLoader(self.valid_dataset, num_workers=5, pin_memory=True,
+                          batch_size=self.config["batch_size"] * 4, shuffle=False,
+                          persistent_workers=True, prefetch_factor=5, drop_last=False)
+    def test_dataloader(self):
+        return DataLoader(self.test_dataset, num_workers=5, pin_memory=True,
+                          batch_size=self.config["batch_size"], shuffle=False,
+                          persistent_workers=True, prefetch_factor=5, drop_last=False)

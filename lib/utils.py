@@ -35,7 +35,7 @@ def embed_context(device, model, dataset):
 
 
 def get_icafbirn(seed):
-    df = pd.read_csv('./data/ica_fbirn/info_df.csv', index_col=0)
+    df = pd.read_csv('/data/users1/egeenjaar/local-global/data/ica_fbirn/info_df.csv', index_col=0)
     trainval_index, test_index = train_test_split(
         df.index.values, train_size=0.8, random_state=seed, stratify=df['sex'])
     train_index, valid_index = train_test_split(
@@ -52,7 +52,5 @@ def generate_version_name(config):
         f'd{config["dataset"]}_' \
         f's{config["seed"]}_' \
         f's{config["local_size"]}_' \
-        f'g{config["context_size"]}_' \
-        f'nl{config["num_layers"]}_' \
-        f'lr{config["lr"]}'
+        f'g{config["context_size"]}'
     return version
