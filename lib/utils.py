@@ -52,7 +52,5 @@ def generate_version_name(config):
         f'd{config["dataset"]}_' \
         f's{config["seed"]}_' \
         f's{config["local_size"]}_' \
-        f'g{config["context_size"]}_' \
-        f'nl{config["num_layers"]}_' \
-        f'lr{config["lr"]}'
+        f'g{config["context_size"]}'
     return version

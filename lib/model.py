@@ -14,27 +14,24 @@ from sklearn.linear_model import LogisticRegression
 
 
 class BaseModel(pl.LightningModule):
-    def __init__(self, input_size: int, local_size: int, context_size: int,
-                 num_layers: int, spatial_hidden_size: int,
-                 temporal_hidden_size: int,
-                 beta: float, gamma: float, theta: float,
-                 lr=0.001, seed=42, contrastive_dim: int = 0):
+    def __init__(self, config, hyperparameters):
         super().__init__()
-        self.local_size = local_size
-        self.context_size = context_size
-        self.input_size = input_size
-        self.num_layers = num_layers
-        self.spatial_hidden_size = spatial_hidden_size
-        self.temporal_hidden_size = temporal_hidden_size
+        self.local_size = config['local_size']
+        self.context_size = config['context_size']
+        self.input_size = config['data_size']
+        self.num_layers = hyperparameters['num_layers']
+        self.spatial_hidden_size = hyperparameters['spatial_hidden_size']
+        self.temporal_hidden_size = hyperparameters['temporal_hidden_size']
         self.spatial_decoder = LocalDecoder(
-            local_size + context_size, spatial_hidden_size,
-            input_size, num_layers)
-        self.lr = lr
-        self.seed = seed
+            config['local_size'] + config['context_size'],
+            config['spatial_hidden_size'],
+            config['data_size'], hyperparameters['num_layers'])
+        self.lr = hyperparameters['lr']
+        self.seed = config['seed']
         # Loss function hyperparameters
-        self.beta = beta
-        self.gamma = gamma
-        self.theta = theta
+        self.beta = hyperparameters['beta']
+        self.gamma = hyperparameters['gamma']
+        self.theta = hyperparameters['theta']
         self.anneal = 0.0
         self.loss_keys = [
             'mse',
@@ -44,7 +41,7 @@ class BaseModel(pl.LightningModule):
         ]
         # Lightning parameters
         self.automatic_optimization = False
-        self.save_hyperparameters()
+        self.save_hyperparameters(hyperparameters)
 
     def forward(self, x, x_p):
         raise NotImplementedError
