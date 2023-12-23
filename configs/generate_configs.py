@@ -6,7 +6,7 @@ with Path('./default.yaml').open('r') as f:
 
 i = 0
 seeds = [42, 1337, 9999, 1212, 8585, 6767]
-models = ['DSVAE']
+models = ['DSVAE', 'IDSVAE']
 local_sizes = [2, 4, 8]
 context_sizes = [2, 4, 8, 16]
 model_dict = default_conf.copy()
@@ -40,5 +40,7 @@ for seed in seeds:
             with open(f'config_{i}.yaml', 'w') as file:
                 documents = yaml.dump(model_dict, file)
             print(i,
-                    model_dict['context_size'])
+                  model_dict['seed'],
+                  model_dict['local_size'],
+                  model_dict['context_size'])
             i += 1

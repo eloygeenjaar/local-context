@@ -244,3 +244,10 @@ class CDSVAE(BaseModel):
 
     def embed_context(self, x):
         return self.temporal_encoder.get_context(x)[0]
+
+class IDSVAE(DSVAE):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.temporal_encoder = TemporalEncoder(
+            self.input_size, self.local_size, self.context_size,
+            self.temporal_hidden_size, independence=True)

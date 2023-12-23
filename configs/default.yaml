@@ -1,8 +1,8 @@
 dataset: ICAfBIRN
-model: DSVAE
+model: IndDSVAE
 
 local_size: 2
-context_size: 4
+context_size: 2
 contrastive_dim: 0
 
 num_layers: 3
