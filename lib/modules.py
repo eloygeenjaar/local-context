@@ -51,12 +51,15 @@ class LocalEncoder(nn.Module):
 
 
 class TemporalEncoder(nn.Module):
-    def __init__(self, input_size, local_size, context_size, hidden_size=256):
+    def __init__(self, input_size, local_size, context_size, hidden_size=256,
+                 independence=False):
         super().__init__()
         self.input_size = input_size
         self.local_size = local_size
         self.hidden_size = hidden_size
         self.context_size = context_size
+        self.independence = independence
+        # TODO: Add dropout as hyperparameter
         self.dropout = nn.Dropout(0.1)
         self.context_gru = nn.GRU(
             input_size=input_size, hidden_size=hidden_size, bidirectional=True)
@@ -65,7 +68,8 @@ class TemporalEncoder(nn.Module):
         self.context_lin = nn.Linear(2 * hidden_size, 64)
         self.context_mu = nn.Linear(64, context_size)
         self.local_encoder = LocalEncoder(
-            input_size + context_size, hidden_size, local_size)
+            input_size if independence else input_size + context_size,
+            hidden_size, local_size)
         self.context_to_prior = nn.Linear(context_size, hidden_size)
 
     def get_context(self, x):
@@ -88,7 +92,10 @@ class TemporalEncoder(nn.Module):
         # Use the original input and context representation to infer
         # each local representation
         context_z = context_z.unsqueeze(0).repeat(num_timesteps, 1, 1)
-        context_input = torch.cat((x, context_z), dim=-1)
+        if self.independence:
+            context_input = x
+        else:
+            context_input = torch.cat((x, context_z), dim=-1)
         h_prior = torch.zeros((1, batch_size, self.hidden_size),
                               device=x.device)
         local_dist, prior_dist = self.local_encoder(context_input, h_prior)

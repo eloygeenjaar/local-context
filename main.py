@@ -87,15 +87,15 @@ if __name__ == "__main__":
     ray_trainer = TorchTrainer(
         train_tune,
         scaling_config=ScalingConfig(num_workers=1, use_gpu=True,
-                                     resources_per_worker={"CPU": 5, "GPU": 1}),
+                                     resources_per_worker={"CPU": 4, "GPU": 1}),
         run_config=ray.train.RunConfig(
             local_dir='/data/users1/egeenjaar/local-global/ray_results',
             name=version,
             # Stop when we've reached a threshold accuracy, or a maximum
             # training_iteration, whichever comes first
-            stop={"training_iteration": 750},
+            stop={"training_iteration": epochs},
             checkpoint_config=ray.train.CheckpointConfig(
-                num_to_keep=4,
+                num_to_keep=8,
                 checkpoint_score_attribute="va_loss",
                 checkpoint_score_order="min",
         ))
