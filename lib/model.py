@@ -10,7 +10,8 @@ from torch import distributions as D
 from torch.nn import functional as F
 from sklearn.decomposition import PCA
 from .modules import (
-    TemporalEncoder, LocalEncoder, LocalDecoder)
+    TemporalEncoder, LocalEncoder, LocalDecoder,
+    ConvContextEncoder, ConvContextDecoder)
 from sklearn.linear_model import LogisticRegression
 
 
@@ -20,6 +21,7 @@ class BaseModel(pl.LightningModule):
         self.local_size = config['local_size']
         self.context_size = config['context_size']
         self.input_size = config['data_size']
+        self.window_size = config['window_size']
         self.num_layers = hyperparameters['num_layers']
         self.spatial_hidden_size = hyperparameters['spatial_hidden_size']
         self.temporal_hidden_size = hyperparameters['temporal_hidden_size']
@@ -251,3 +253,34 @@ class IDSVAE(DSVAE):
         self.temporal_encoder = TemporalEncoder(
             self.input_size, self.local_size, self.context_size,
             self.temporal_hidden_size, independence=True)
+
+
+class CO(BaseModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.temporal_encoder = ConvContextEncoder(
+            self.input_size, self.spatial_hidden_size, self.context_size,
+            self.window_size
+        )
+        self.spatial_decoder = ConvContextDecoder(
+            self.context_size, self.spatial_hidden_size, self.input_size,
+            self.window_size
+        )
+
+    def forward(self, x, x_p):
+        x = x.permute(1, 2, 0)
+        context_dist = self.temporal_encoder(x)
+        z = context_dist.rsample()
+        x_hat = self.spatial_decoder(z)
+        x_hat = x_hat.permute(2, 0, 1)
+        return {
+            'context_dist': context_dist,
+            'local_dist': D.Normal(torch.zeros_like(x_hat), 1.),
+            'prior_dist': D.Normal(torch.zeros_like(x_hat), 1.),
+            'x_hat': x_hat,
+            'context_dist_n': None,
+            'context_dist_p': None
+        }
+
+    def embed_context(self, x):
+        return self.temporal_encoder(x)[0]

@@ -12,7 +12,9 @@ from ray.train.lightning import RayTrainReportCallback
 from torch.utils.data import DataLoader
 from ray.tune.schedulers.pb2 import PB2
 from lightning.pytorch.callbacks import ModelCheckpoint
-from lib.utils import get_default_config, generate_version_name
+from lib.utils import (
+    get_default_config, generate_version_name,
+    get_search_space, get_hyperparam_bounds)
 from lightning.pytorch.loggers import TensorBoardLogger, CSVLogger
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from ray.train import lightning, ScalingConfig, CheckpointConfig
@@ -25,16 +27,6 @@ if __name__ == "__main__":
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
     torch.cuda.manual_seed(config["seed"])
-    search_space = {"train_loop_config": {
-        "num_layers": tune.choice([1, 2, 3, 4]),
-        "spatial_hidden_size": tune.choice([32, 64, 128, 256]),
-        "temporal_hidden_size": tune.choice([128, 256, 512]),
-        "lr": tune.loguniform(1e-4, 2e-3),
-        "batch_size": tune.choice([32, 64, 128, 256]),
-        "beta": tune.loguniform(1e-5, 1e-3),
-        "gamma": tune.loguniform(1e-5, 1e-3),
-        "theta": tune.loguniform(1e-7, 1e-3) if 'Cont' in config['model'] else tune.choice([0])}
-    }
     version = generate_version_name(config)
     data_module = importlib.import_module('lib.data')
     dataset_type = getattr(data_module, config['dataset'])
@@ -48,7 +40,7 @@ if __name__ == "__main__":
         filename="best", save_last=False, monitor="va_loss")
     early_stopping = EarlyStopping(
         monitor="va_loss", patience=50, mode="min")
-
+    search_space = get_search_space(config)
     epochs = 750
     viz = False
     def train_tune(search_space):
@@ -72,16 +64,7 @@ if __name__ == "__main__":
         perturbation_interval=perturbation_interval,
         metric="va_loss",
         mode="min",
-        hyperparam_bounds={
-            "train_loop_config": {
-            "num_layers": [1, 4],
-            "spatial_hidden_size": [32, 256],
-            "temporal_hidden_size": [128, 512],
-            "lr": [1e-4, 2e-3],
-            "batch_size": [32, 256],
-            "beta": [1e-5, 1e-3],
-            "gamma": [1e-5, 1e-3],
-            "theta": [1e-7, 1e-3] if 'Cont' in config['model'] else [0, 0]}},
+        hyperparam_bounds=get_hyperparam_bounds(config),
     )
 
     ray_trainer = TorchTrainer(

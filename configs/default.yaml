@@ -1,5 +1,5 @@
 dataset: ICAfBIRN
-model: IndDSVAE
+model: CO
 
 local_size: 2
 context_size: 2
