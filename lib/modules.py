@@ -139,3 +139,46 @@ class LocalDecoder(nn.Module):
         for layer in self.layers:
             x = layer(x)
         return x
+
+
+class ConvContextEncoder(nn.Module):
+    def __init__(self, input_size: int, hidden_size: int,
+                 output_size: int, window_size: int):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Conv1d(input_size, hidden_size, kernel_size=4,
+                      stride=2, padding=1),
+            nn.ELU(),
+            nn.Conv1d(hidden_size, hidden_size * 2, kernel_size=4,
+                      stride=2, padding=1),
+            nn.ELU(),
+            nn.Flatten(),
+            nn.Linear(hidden_size * 2 *  (window_size // 4), hidden_size * 4),
+            nn.ELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_size * 4, output_size)
+        )
+
+    def forward(self, x):
+        return D.Normal(self.layers(x), 0.1)
+
+class ConvContextDecoder(nn.Module):
+    def __init__(self, input_size: int, hidden_size: int,
+                 output_size: int, window_size: int):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(input_size, hidden_size * 4),
+            nn.ELU(),
+            nn.Linear(hidden_size * 4, (window_size // 4) * hidden_size * 2),
+            nn.ELU(),
+            nn.Dropout(0.1),
+            nn.Unflatten(1, (hidden_size * 2, 5)),
+            nn.ConvTranspose1d(hidden_size * 2, hidden_size, kernel_size=4,
+                      stride=2, padding=1),
+            nn.ELU(),
+            nn.ConvTranspose1d(hidden_size, output_size, kernel_size=4,
+                      stride=2, padding=1),
+        )
+
+    def forward(self, x):
+        return self.layers(x)
