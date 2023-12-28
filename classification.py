@@ -2,16 +2,18 @@ import torch
 import importlib
 import numpy as np
 from lib.utils import (
-    get_default_config, embed_context_data, generate_version_name)
+    get_default_config, embed_context, generate_version_name)
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
-
+import os
+from pathlib import Path
+import glob
 
 config = get_default_config([''])
-seeds = [42, 1337, 9999, 1212]
-models = ['DSVAE']
-local_sizes = [2, 4]
-context_sizes = [2, 4, 8, 16]
+seeds = [42, 1337, 9999, 1212, 8585, 6767]
+models = ['CO', 'DSVAE', 'IDSVAE', 'LVAE']
+local_sizes = [0, 2, 4, 8, 16]
+context_sizes = [0, 2, 4, 8, 16]
 config = config.copy()
 for seed in seeds:
     np.random.seed(config["seed"])
@@ -32,38 +34,46 @@ for seed in seeds:
                     'cuda' if torch.cuda.is_available() else 'cpu')
                 model_module = importlib.import_module('lib.model')
                 model_type = getattr(model_module, config['model'])
-                model = model_type.load_from_checkpoint(
-                    f'lightning_logs/{version}/checkpoints/best.ckpt')
-                model = model.to(device)
-                model.eval()
 
-                tr_ge, tr_y_orig = embed_context_data(
-                    device, model, train_dataset)
-                va_ge, va_y_orig = embed_context_data(
-                    device, model, valid_dataset)
+                model_path = f'ray_results/{version}'
 
-                num_tr_subjects, tr_num_windows, latent_dim = tr_ge.shape
-                num_va_subjects, va_num_windows, _ = va_ge.shape
+                files = glob.glob(model_path + '/**/*best.ckpt', recursive = True)
+                if len(files) == 0:
+                    continue
+                print(files)
+                for ckpt in files:
+                    model = model_type.load_from_checkpoint(ckpt)
+                    model = model.to(device)
+                    model.eval()
 
-                # Repeat class for each context window
-                tr_y = np.repeat(
-                    tr_y_orig[:, np.newaxis], tr_ge.shape[1], axis=1)
-                va_y = np.repeat(
-                    va_y_orig[:, np.newaxis], va_ge.shape[1], axis=1)
+                    tr_ge, tr_y_orig = embed_context_data(
+                        device, model, train_dataset)
+                    va_ge, va_y_orig = embed_context_data(
+                        device, model, valid_dataset)
 
-                # Reshape context embeddings
-                tr_ge = np.reshape(
-                    tr_ge, (num_tr_subjects * tr_num_windows, latent_dim))
-                va_ge = np.reshape(
-                    va_ge, (num_va_subjects * va_num_windows, latent_dim))
+                    num_tr_subjects, tr_num_windows, latent_dim = tr_ge.shape
+                    num_va_subjects, va_num_windows, _ = va_ge.shape
 
-                tr_y = tr_y.flatten()
-                va_y = va_y.flatten()
+                    # Repeat class for each context window
+                    tr_y = np.repeat(
+                        tr_y_orig[:, np.newaxis], tr_ge.shape[1], axis=1)
+                    va_y = np.repeat(
+                        va_y_orig[:, np.newaxis], va_ge.shape[1], axis=1)
 
-                # Scale and then predict on test set
-                ssc = StandardScaler()
-                tr_ge = ssc.fit_transform(tr_ge)
-                va_ge = ssc.transform(va_ge)
-                svm = SVC(kernel='rbf')
-                svm.fit(tr_ge, tr_y)
-                print(model_name, context_size, svm.score(va_ge, va_y))
+                    # Reshape context embeddings
+                    tr_ge = np.reshape(
+                        tr_ge, (num_tr_subjects * tr_num_windows, latent_dim))
+                    va_ge = np.reshape(
+                        va_ge, (num_va_subjects * va_num_windows, latent_dim))
+
+                    tr_y = tr_y.flatten()
+                    va_y = va_y.flatten()
+
+                    # Scale and then predict on test set
+                    ssc = StandardScaler()
+                    tr_ge = ssc.fit_transform(tr_ge)
+                    va_ge = ssc.transform(va_ge)
+                    svm = SVC(kernel='rbf')
+                    svm.fit(tr_ge, tr_y)
+                    print(ckpt, svm.score(va_ge, va_y))
+
