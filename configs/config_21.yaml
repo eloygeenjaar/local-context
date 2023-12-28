@@ -1,0 +1,11 @@
+batch_size: 2
+beta: 0.0
+dataset: ICAfBIRN
+fold_ix: 0
+gamma: 0.0
+global_size: 8
+local_size: 32
+model: TransGLR
+normalization: individual
+num_folds: 10
+seed: 9999

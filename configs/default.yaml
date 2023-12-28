@@ -1,0 +1,11 @@
+seed: 42
+local_size: 16
+global_size: 16
+beta: 0.0
+gamma: 0.0
+model: GLR
+batch_size: 64
+dataset: Sprite
+normalization: individual
+num_folds: 10
+fold_ix: 0
