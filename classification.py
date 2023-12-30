@@ -28,8 +28,8 @@ for seed in seeds:
                 version = generate_version_name(config)
                 data_module = importlib.import_module('lib.data')
                 dataset_type = getattr(data_module, config['dataset'])
-                train_dataset = dataset_type('train', config['seed'])
-                valid_dataset = dataset_type('valid', config['seed'])
+                train_dataset = dataset_type('train', config['seed'], window_size = 20, window_step = 5)
+                valid_dataset = dataset_type('valid', config['seed'], window_size = 20, window_step = 5)
                 device = torch.device(
                     'cuda' if torch.cuda.is_available() else 'cpu')
                 model_module = importlib.import_module('lib.model')
@@ -46,9 +46,9 @@ for seed in seeds:
                     model = model.to(device)
                     model.eval()
 
-                    tr_ge, tr_y_orig = embed_context_data(
+                    tr_ge, tr_y_orig = embed_context(
                         device, model, train_dataset)
-                    va_ge, va_y_orig = embed_context_data(
+                    va_ge, va_y_orig = embed_context(
                         device, model, valid_dataset)
 
                     num_tr_subjects, tr_num_windows, latent_dim = tr_ge.shape
