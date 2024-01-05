@@ -50,10 +50,10 @@ class ICAfBIRN(Dataset):
         self.data = []
         for (i, row) in self.df.iterrows():
             x = nb.load(row['path']).get_fdata()[:150, comp_ix]
-            x = signal.clean(
-                x, detrend=True,
-                standardize='zscore_sample', t_r=2.0,
-                low_pass=0.15, high_pass=0.008)
+            # x = signal.clean(
+            #     x, detrend=True,
+            #     standardize='zscore_sample', t_r=2.0,
+            #     low_pass=0.15, high_pass=0.008)
             self.data.append(x)
         self.data = np.stack(self.data, axis=0)
         self.data = torch.from_numpy(self.data)

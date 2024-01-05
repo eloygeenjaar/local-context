@@ -107,7 +107,7 @@ if __name__ == "__main__":
 
     # results_grid = tuner.fit()
 
-    storage_path = '/data/users1/dkim195/local-global/ray_results'
+    storage_path = '/data/users1/dkim195/local-global/ray_results_ckpt'
     # exp_name = 'mLVAE_dICAfBIRN_s6767_s2_g0'
 
     experiments_list = get_immediate_subdirectories(storage_path)

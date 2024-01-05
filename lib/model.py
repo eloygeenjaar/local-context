@@ -16,27 +16,28 @@ from sklearn.linear_model import LogisticRegression
 
 
 class BaseModel(pl.LightningModule):
-    def __init__(self, config, hyperparameters, viz):
+    def __init__(self, num_layers, spatial_hidden_size, temporal_hidden_size, lr, batch_size, beta, gamma, theta):
         super().__init__()
-        self.local_size = config['local_size']
-        self.context_size = config['context_size']
-        self.input_size = config['data_size']
-        self.window_size = config['window_size']
-        self.num_layers = hyperparameters['num_layers']
-        self.spatial_hidden_size = hyperparameters['spatial_hidden_size']
-        self.temporal_hidden_size = hyperparameters['temporal_hidden_size']
+        self.local_size = 2
+        self.context_size = 2
+        self.input_size = 53 #data_size
+        self.window_size = 20
+        self.window_step = 5
+        self.contrastive_dim = 0
+        self.batch_size = batch_size
+        self.num_layers = num_layers
+        self.spatial_hidden_size = spatial_hidden_size
+        self.temporal_hidden_size = temporal_hidden_size
         self.spatial_decoder = LocalDecoder(
-            config['local_size'] + config['context_size'],
-            config['spatial_hidden_size'],
-            config['data_size'], hyperparameters['num_layers'])
-        self.lr = hyperparameters['lr']
-        self.seed = config['seed']
+            self.local_size + self.context_size, spatial_hidden_size,
+            self.input_size, num_layers)
+        self.lr = lr
+        self.seed = 42
         # Loss function hyperparameters
-        self.beta = hyperparameters['beta']
-        self.gamma = hyperparameters['gamma']
-        self.theta = hyperparameters['theta']
+        self.beta = beta
+        self.gamma = gamma
+        self.theta = theta
         self.anneal = 0.0
-        self.viz = viz
         self.loss_keys = [
             'mse',
             'kl_l',
@@ -45,7 +46,7 @@ class BaseModel(pl.LightningModule):
         ]
         # Lightning parameters
         self.automatic_optimization = False
-        self.save_hyperparameters(hyperparameters)
+        self.save_hyperparameters()
 
     def forward(self, x, x_p):
         raise NotImplementedError
@@ -257,6 +258,11 @@ class IDSVAE(DSVAE):
 
 class CO(BaseModel):
     def __init__(self, *args, **kwargs):
+        print(args)
+        print(kwargs)
+        #()
+        # {'num_layers': 1, 'spatial_hidden_size': 128, 'temporal_hidden_size': 128, 'lr': 0.0010872422452394674, 'batch_size': 128, 'beta': 0, 'gamma': 0.000291063591313307, 'theta': 0}
+
         super().__init__(*args, **kwargs)
         self.temporal_encoder = ConvContextEncoder(
             self.input_size, self.spatial_hidden_size, self.context_size,

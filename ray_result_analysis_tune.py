@@ -40,12 +40,12 @@ if __name__ == "__main__":
         
         try:
             results = ray.tune.ExperimentAnalysis(experiment_path, default_metric = 'va_mse', default_mode = "min")
-            with open("ray_result_analysis_check.txt", "a") as f:
+            with open("ray_result_analysis_check_ckpt.txt", "a") as f:
                 print(f"Top 3 Configs from {experiment_path}...", file = f)
                 
                 for _ in range(3):
-                    print("va_mse: ", results.best_result['va_mse'], results.best_config, file = f)
-                    print(results.best_result['va_mse'])
+                    print("va_loss: ", results.best_result['va_loss'], "; epoch: ", results.best_result['epoch'], "; ", results.best_config, file = f)
+                    print(results.best_checkpoint)
                     bestTrial = results.best_trial
                     results.trials.remove(bestTrial)
             count += 1
