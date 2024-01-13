@@ -18,6 +18,8 @@ from sklearn.linear_model import LogisticRegression
 class BaseModel(pl.LightningModule):
     def __init__(self, config, hyperparameters, viz):
         super().__init__()
+        print(config)
+        print(hyperparameters)
         self.local_size = config['local_size']
         self.context_size = config['context_size']
         self.input_size = config['data_size']

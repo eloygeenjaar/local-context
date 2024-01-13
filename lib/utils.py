@@ -59,30 +59,36 @@ def generate_version_name(config):
 def get_search_space(config):
     return {"train_loop_config": {
         # Unused parameter for Context-only model
-        "num_layers": tune.choice([1, 2, 3, 4]) if not config['model'] == 'CO' else tune.choice([1]),
-        "spatial_hidden_size": tune.choice([32, 64, 128, 256]),
+        "num_layers": [1, 2, 3, 4] if not config['model'] == 'CO' else [1],
+        "spatial_hidden_size": [64, 128, 256],
         # Unused parameter for Context-only model
-        "temporal_hidden_size": tune.choice([128, 256, 512]) if not config['model'] == 'CO' else tune.choice([128]),
-        "lr": tune.loguniform(1e-4, 2e-3),
-        "batch_size": tune.choice([32, 64, 128, 256]),
+        "temporal_hidden_size": [128, 256, 512] if not config['model'] == 'CO' else [128],
+        "lr": tune.loguniform(1e-6, 1e-3),
+        "batch_size": [64, 128],
         # Unused parameter for Context-only model
-        "beta": tune.loguniform(1e-5, 1e-3) if not config['model'] == 'CO' else tune.choice([0]),
+       # "beta": tune.loguniform(1e-5, 1e-3) if not config['model'] == 'CO' else [0],
+       "beta": tune.loguniform(1e-7, 1e-3),
         # Essentially 'beta' for the context-only model
-        "gamma": tune.loguniform(1e-7, 1e-3) if not config['model'] == 'CO' else tune.loguniform(1e-5, 1e-3),
-        "theta": tune.loguniform(1e-7, 1e-3) if 'Cont' in config['model'] else tune.choice([0])}
+        #"gamma": tune.loguniform(1e-7, 1e-3) if not config['model'] == 'CO' else tune.loguniform(1e-5, 1e-3),
+        "gamma": tune.loguniform(1e-7, 1e-5),
+        "theta": tune.loguniform(1e-7, 1e-3) if 'Cont' in config['model'] else [0]}
     }
     
-def get_hyperparam_bounds(config):
+def get_start_config(config):
     return {"train_loop_config": {
         # Unused parameter for Context-only model
-        "num_layers": [1, 4] if not config['model'] == 'CO' else [1, 1],
-        "spatial_hidden_size": [32, 256],
+        "num_layers": tune.choice([1, 2, 3, 4]) if not config['model'] == 'CO' else tune.choice([1]),
+        "spatial_hidden_size": tune.choice([64, 128, 256]),
         # Unused parameter for Context-only model
-        "temporal_hidden_size": [128, 512] if not config['model'] == 'CO' else [128, 128],
-        "lr": [1e-4, 2e-3],
-        "batch_size": [32, 256],
+        "temporal_hidden_size": tune.choice([128, 256, 512]) if not config['model'] == 'CO' else tune.choice([128]),
+       # "lr": tune.loguniform(1e-4, 2e-3),
+       "lr": tune.choice([0.001]),
+        "batch_size": tune.choice([64, 128]),
         # Unused parameter for Context-only model
-        "beta": [1e-5, 1e-3] if not config['model'] == 'CO' else [0, 0],
+       # "beta": tune.loguniform(1e-5, 1e-3) if not config['model'] == 'CO' else [0],
+       "beta": tune.choice([0.0001]),
         # Essentially 'beta' for the context-only model
-        "gamma": [1e-7, 1e-3] if not config['model'] == 'CO' else [1e-5, 1e-3],
-        "theta": [1e-7, 1e-3] if 'Cont' in config['model'] else [0, 0]}}
+        #"gamma": tune.loguniform(1e-7, 1e-3) if not config['model'] == 'CO' else tune.loguniform(1e-5, 1e-3),
+        "gamma": tune.choice([0.0]),
+        "theta": tune.loguniform(1e-7, 1e-3) if 'Cont' in config['model'] else tune.choice([0])}
+    }

@@ -4,17 +4,8 @@ import nibabel as nb
 import lightning.pytorch as pl
 from nilearn import signal
 from lib.utils import get_icafbirn
+from lib.definitions import comp_ix
 from torch.utils.data import Dataset, DataLoader
-
-
-comp_ix = [
-    68, 52, 97, 98, 44,
-    20, 55,
-    2, 8, 1, 10, 26, 53, 65, 79, 71,
-    15, 4, 61, 14, 11, 92, 19, 7, 76,
-    67, 32, 42, 69, 60, 54, 62, 78, 83, 95, 87, 47, 80, 36, 66, 37, 82,
-    31, 39, 22, 70, 16, 50, 93,
-    12, 17, 3, 6]
 
 
 class ICAfBIRN(Dataset):
