@@ -25,10 +25,12 @@ class BaseModel(pl.LightningModule):
         self.num_layers = hyperparameters['num_layers']
         self.spatial_hidden_size = hyperparameters['spatial_hidden_size']
         self.temporal_hidden_size = hyperparameters['temporal_hidden_size']
+        self.dropout = hyperparameters['dropout']
         self.spatial_decoder = LocalDecoder(
             config['local_size'] + config['context_size'],
             config['spatial_hidden_size'],
-            config['data_size'], hyperparameters['num_layers'])
+            config['data_size'], hyperparameters['num_layers'],
+            dropout_val=hyperparameters['dropout'])
         self.lr = hyperparameters['lr']
         self.seed = config['seed']
         # Loss function hyperparameters
@@ -103,7 +105,7 @@ class BaseModel(pl.LightningModule):
         # Optimization
         opt.zero_grad()
         self.manual_backward(loss)
-        nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
+        #nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
         opt.step()
         self.anneal = min(1.0, self.anneal + 1/5000)
         train_dict = {f'tr_{l_key}': output[l_key] for l_key in self.loss_keys}
@@ -163,7 +165,7 @@ class BaseModel(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, factor=0.90, patience=5, verbose=True)
+            optimizer, factor=0.90, patience=10, verbose=True)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
     def on_validation_epoch_end(self):
@@ -177,7 +179,7 @@ class DSVAE(BaseModel):
         super().__init__(*args, **kwargs)
         self.temporal_encoder = TemporalEncoder(
             self.input_size, self.local_size, self.context_size,
-            self.temporal_hidden_size)
+            hidden_size=self.temporal_hidden_size, dropout_val=self.dropout)
 
     def forward(self, x, x_p):
         context_dist, local_dist, prior_dist, z = self.temporal_encoder(x)
@@ -200,7 +202,8 @@ class LVAE(BaseModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.local_encoder = LocalEncoder(
-            self.input_size, self.temporal_hidden_size, self.local_size)
+            self.input_size, self.temporal_hidden_size, self.local_size,
+            dropout_val=self.dropout)
 
     def forward(self, x, x_p):
         local_dist, prior_dist = self.local_encoder(x)
@@ -221,7 +224,7 @@ class CDSVAE(BaseModel):
         super().__init__(*args, **kwargs)
         self.temporal_encoder = TemporalEncoder(
             self.input_size, self.local_size, self.context_size,
-            self.temporal_hidden_size)
+            hidden_size=self.temporal_hidden_size, dropout_val=self.dropout)
         self.cf_loss = InfoNCE()
         self.tau = 1.
 
@@ -252,7 +255,8 @@ class IDSVAE(DSVAE):
         super().__init__(*args, **kwargs)
         self.temporal_encoder = TemporalEncoder(
             self.input_size, self.local_size, self.context_size,
-            self.temporal_hidden_size, independence=True)
+            hidden_size=self.temporal_hidden_size, independence=True,
+            dropout_val=self.dropout)
 
 
 class CO(BaseModel):
