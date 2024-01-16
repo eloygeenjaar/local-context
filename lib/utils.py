@@ -56,25 +56,7 @@ def generate_version_name(config):
         f'g{config["context_size"]}'
     return version
 
-def get_search_space(config):
-    return {"train_loop_config": {
-        # Unused parameter for Context-only model
-        "num_layers": [1, 2, 3, 4] if not config['model'] == 'CO' else [1],
-        "spatial_hidden_size": [64, 128, 256],
-        # Unused parameter for Context-only model
-        "temporal_hidden_size": [128, 256, 512] if not config['model'] == 'CO' else [128],
-        "lr": tune.loguniform(1e-6, 1e-3),
-        "batch_size": [64, 128],
-        # Unused parameter for Context-only model
-       # "beta": tune.loguniform(1e-5, 1e-3) if not config['model'] == 'CO' else [0],
-       "beta": tune.loguniform(1e-7, 1e-3),
-        # Essentially 'beta' for the context-only model
-        #"gamma": tune.loguniform(1e-7, 1e-3) if not config['model'] == 'CO' else tune.loguniform(1e-5, 1e-3),
-        "gamma": tune.loguniform(1e-7, 1e-5),
-        "theta": tune.loguniform(1e-7, 1e-3) if 'Cont' in config['model'] else [0]}
-    }
-    
-def get_start_config(config):
+def get_hyperparameters(config):
     return {"train_loop_config": {
         # Unused parameter for Context-only model
         "num_layers": tune.choice([1, 2, 3, 4, 5]) if not config['model'] == 'CO' else tune.choice([1]),
