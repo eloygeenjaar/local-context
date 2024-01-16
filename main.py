@@ -1,11 +1,13 @@
 import os
 import ray
 import sys
+import json
 import torch
 import shutil
 import importlib
 import numpy as np
 import lightning.pytorch as pl
+from pathlib import Path
 from ray import train, tune
 from lib.data import DataModule
 from ray.tune import CLIReporter
@@ -65,7 +67,8 @@ class MyRayTrainReportCallback(RayTrainReportCallback):
 
 if __name__ == "__main__":
     test = False
-    epochs = 1000
+    max_epochs = 750 if not test else 10
+    scheduler_epochs = 250 if not test else 5
     perturbation_interval = 20 if not test else 10
     torch.backends.cudnn.deterministic = True
     config = get_default_config(sys.argv)
@@ -92,10 +95,10 @@ if __name__ == "__main__":
         dm = DataModule(config, dataset_type, config["batch_size"])
         # TODO: change config (second) back to search_space
         model = model_type(config, search_space, viz)
+        model = ray.train.torch.prepare_model(model)
         kwargs_tr = {
             "devices": "auto",
             "accelerator": "auto",
-            "max_epochs": epochs,
             "callbacks": [RayTrainReportCallback()],
             "strategy": ray.train.lightning.RayDDPStrategy(find_unused_parameters=True),
             "plugins": [ray.train.lightning.RayLightningEnvironment()],
@@ -109,19 +112,26 @@ if __name__ == "__main__":
             "datamodule": dm,
         }
         trainer = ray.train.lightning.prepare_trainer(trainer)
+
+        checkpoint = train.get_checkpoint()
+        if checkpoint:
+            with checkpoint.as_directory() as ckpt_dir:
+                ckpt_path = os.path.join(ckpt_dir, "checkpoint.ckpt")
+                kwargs_fit['ckpt_path'] = ckpt_path
+
         trainer.fit(**kwargs_fit)
 
     scheduler = ASHAScheduler(
         time_attr='training_iteration',
         metric='va_loss',
         mode='min',
-        max_t=epochs,
-        grace_period=100,
-        reduction_factor=3,
+        max_t=scheduler_epochs,
+        grace_period=50 if not test else 1,
+        reduction_factor=2,
         brackets=1,
     )
 
-    algo = OptunaSearch(get_start_config(config), metric="va_loss", mode="min")
+    algo = OptunaSearch(metric="va_loss", mode="min")
 
     reporter = CLIReporter(
         parameter_columns=search_space["train_loop_config"].keys(),
@@ -137,7 +147,7 @@ if __name__ == "__main__":
             name=version,
             # Stop when we've reached a threshold accuracy, or a maximum
             # training_iteration, whichever comes first
-            stop={"training_iteration": epochs},
+            stop={"training_iteration": scheduler_epochs},
             checkpoint_config=CheckpointConfig(num_to_keep=1,
                 checkpoint_score_attribute="va_loss",
                 checkpoint_score_order="min"
@@ -148,10 +158,54 @@ if __name__ == "__main__":
     tuner = tune.Tuner(
         ray_trainer,
         tune_config=tune.TuneConfig(
-            #scheduler=scheduler,
             num_samples=100 if not test else 2,
             search_alg=algo,
             scheduler=scheduler
-        )
+        ),
+        param_space=get_start_config(config)
     )
-    results_grid = tuner.fit()
+    result_grid = tuner.fit()
+
+    best_result = result_grid.get_best_result( 
+        metric="va_loss", mode="min")
+    best_checkpoint = best_result.checkpoint
+    params_p = Path(best_checkpoint.path).parent / 'params.json'
+    with params_p.open('r') as f:
+        params = json.load(f)
+    
+    for result in result_grid:
+        if not result == best_result:
+            checkpoint = Path(result.checkpoint.path) / 'checkpoint.ckpt'
+            checkpoint.unlink()
+
+    ray_trainer = TorchTrainer(
+        train_loop_per_worker=train_tune,
+        train_loop_config=params['train_loop_config'],
+        scaling_config=ScalingConfig(num_workers=1, use_gpu=True,
+                                     resources_per_worker={"CPU": 4, "GPU": 1}),
+        run_config=ray.train.RunConfig(
+            local_dir='/data/users1/egeenjaar/local-global/ray_results',
+            name=version,
+            # Stop when we've reached a threshold accuracy, or a maximum
+            # training_iteration, whichever comes first
+            stop={"training_iteration": max_epochs},
+            checkpoint_config=CheckpointConfig(num_to_keep=1,
+                checkpoint_score_attribute="va_loss",
+                checkpoint_score_order="min"
+            ),
+            progress_reporter=reporter,
+            failure_config=FailureConfig(max_failures=2)
+    ),
+        resume_from_checkpoint=best_result.checkpoint
+    )
+    result = ray_trainer.fit()
+    original_cp = Path(result.checkpoint.path)
+    c_p = original_cp / 'checkpoint.ckpt'
+    nc_p = original_cp.parent.parent / 'final.ckpt'
+    c_p.replace(nc_p)
+    r_p = original_cp.parent / 'result.json'
+    nr_p = original_cp.parent.parent / 'result.json'
+    r_p.replace(nr_p)
+    p_p = original_cp.parent / 'params.json'
+    np_p = original_cp.parent.parent / 'params.json'
+    p_p.replace(np_p)

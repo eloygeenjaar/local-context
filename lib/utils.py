@@ -77,18 +77,19 @@ def get_search_space(config):
 def get_start_config(config):
     return {"train_loop_config": {
         # Unused parameter for Context-only model
-        "num_layers": tune.choice([1, 2, 3, 4]) if not config['model'] == 'CO' else tune.choice([1]),
+        "num_layers": tune.choice([1, 2, 3, 4, 5]) if not config['model'] == 'CO' else tune.choice([1]),
         "spatial_hidden_size": tune.choice([64, 128, 256]),
         # Unused parameter for Context-only model
         "temporal_hidden_size": tune.choice([128, 256, 512]) if not config['model'] == 'CO' else tune.choice([128]),
        # "lr": tune.loguniform(1e-4, 2e-3),
-       "lr": tune.choice([0.001]),
+       "lr": tune.loguniform(1e-4, 2e-3),
         "batch_size": tune.choice([64, 128]),
         # Unused parameter for Context-only model
        # "beta": tune.loguniform(1e-5, 1e-3) if not config['model'] == 'CO' else [0],
-       "beta": tune.choice([0.0001]),
+       "beta": tune.loguniform(1e-5, 1e-3),
         # Essentially 'beta' for the context-only model
         #"gamma": tune.loguniform(1e-7, 1e-3) if not config['model'] == 'CO' else tune.loguniform(1e-5, 1e-3),
-        "gamma": tune.choice([0.0]),
-        "theta": tune.loguniform(1e-7, 1e-3) if 'Cont' in config['model'] else tune.choice([0])}
+        "gamma": tune.loguniform(1e-7, 1e-3),
+        "theta": tune.loguniform(1e-7, 1e-3) if 'Cont' in config['model'] else tune.choice([0]),
+        "dropout": tune.choice([0, 0.05, 0.1, 0.25, 0.5])}
     }
