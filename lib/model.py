@@ -47,7 +47,6 @@ class BaseModel(pl.LightningModule):
         ]
         # Lightning parameters
         self.automatic_optimization = False
-        self.save_hyperparameters(hyperparameters)
 
     def forward(self, x, x_p):
         raise NotImplementedError
