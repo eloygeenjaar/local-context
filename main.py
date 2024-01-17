@@ -1,8 +1,10 @@
 import os
 import ray
 import sys
+import time
 import json
 import torch
+import random
 import importlib
 import numpy as np
 import lightning.pytorch as pl
@@ -25,11 +27,11 @@ from lib.utils import (
 if __name__ == "__main__":
     test = False
     viz = False  # Visualize during training
-    max_epochs = 750 if not test else 10
-    scheduler_epochs = 250 if not test else 5
-    perturbation_interval = 20 if not test else 10
+    max_epochs = 750 if not test else 100
+    scheduler_epochs = 250 if not test else 50
     torch.backends.cudnn.deterministic = True
     config = get_default_config(sys.argv)
+    random.seed(config["seed"])
     np.random.seed(config["seed"])
     torch.manual_seed(config["seed"])
     torch.cuda.manual_seed(config["seed"])
@@ -49,7 +51,7 @@ if __name__ == "__main__":
         kwargs_tr = {
             "devices": "auto",
             "accelerator": "auto",
-            "callbacks": [RayTrainReportCallback(), early_stopping],
+            "callbacks": [RayTrainReportCallback()],
             "strategy": ray.train.lightning.RayDDPStrategy(find_unused_parameters=True),
             "plugins": [ray.train.lightning.RayLightningEnvironment()],
             "enable_progress_bar": False,
@@ -132,11 +134,15 @@ if __name__ == "__main__":
     )
     result_grid = tuner.fit()
 
+    # Wait for workers to be done
+    time.sleep(5)
+
     # Get the best result from the tuner
     best_result = result_grid.get_best_result( 
         metric="va_loss", mode="min")
     # Get the checkpoint at which this model is saved
     best_checkpoint = best_result.checkpoint
+
     # Get the hyperparameters of the model
     params_p = Path(best_checkpoint.path).parent / 'params.json'
     with params_p.open('r') as f:
@@ -150,7 +156,7 @@ if __name__ == "__main__":
 
     # Initialize another trainer instance to finish training the best
     # model
-    ray_trainer = TorchTrainer(
+    final_trainer = TorchTrainer(
         train_loop_per_worker=train_tune,
         train_loop_config=params['train_loop_config'],
         scaling_config=ScalingConfig(num_workers=1, use_gpu=True,
@@ -165,15 +171,18 @@ if __name__ == "__main__":
                 checkpoint_score_attribute="va_loss",
                 checkpoint_score_order="min"),
             progress_reporter=reporter,
-            failure_config=FailureConfig(max_failures=2)
     ),
         resume_from_checkpoint=best_result.checkpoint
     )
-    result = ray_trainer.fit()
-    
+    result = final_trainer.fit()
+
+    # Wait for workers to be done
+    time.sleep(5)
+    best_checkpoint = result.best_checkpoints[0][0]
+
     # Move all the final checkpoints to the parent folder
     # for easy access after training
-    original_cp = Path(result.checkpoint.path)
+    original_cp = Path(best_checkpoint.path)
     c_p = original_cp / 'checkpoint.ckpt'
     nc_p = original_cp.parent.parent / 'final.ckpt'
     c_p.replace(nc_p)
