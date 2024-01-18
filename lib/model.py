@@ -265,6 +265,13 @@ class IDSVAE(DSVAE):
             hidden_size=self.temporal_hidden_size, independence=True,
             dropout_val=self.dropout)
 
+class CIDSVAE(CDSVAE):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.temporal_encoder = TemporalEncoder(
+            self.input_size, self.local_size, self.context_size,
+            hidden_size=self.temporal_hidden_size, independence=True,
+            dropout_val=self.dropout)
 
 class CO(BaseModel):
     def __init__(self, *args, **kwargs):

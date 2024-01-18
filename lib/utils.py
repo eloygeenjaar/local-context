@@ -101,10 +101,12 @@ def init_data_module(config, shuffle_train=False) -> DataModule:
     dm.setup()
     return dm
     
-def init_model(config, hyperparameters, viz) -> pl.LightningModule:   
+def init_model(config, hyperparameters, viz, ckpt_path=None) -> pl.LightningModule:   
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
     model = model_type(config, hyperparameters, viz)
+    if ckpt_path is not None:
+        model.load_state_dict(torch.load(ckpt_path)['state_dict'])
     return model
 
 def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
