@@ -6,7 +6,7 @@ from pathlib import Path
 from sklearn.decomposition import PCA
 
 
-def visualize_trajectory(x: np.ndarray, p: Path, name: str, num_subjects=5):
+def visualize_trajectory(x: np.ndarray, p: Path, name: str, num_subjects=2):
     # We assume that x comes in the following shape:
     # (num_subjects, num_timesteps, latent_dimensions)
     assert len(x.shape) == 3 or len(x.shape) == 4

@@ -12,25 +12,22 @@ models = ['DSVAE', 'CDSVAE', 'IDSVAE']
 #context_sizes = [2, 4, 8, 16]
 local_sizes = [2]
 context_sizes = [2]
-smooth_contexts = [True, False]
 model_dict = default_conf.copy()
 for seed in seeds:
     for model in models:
         for local_size in local_sizes:
             for context_size in context_sizes:
-                for smooth_context in smooth_contexts:
-                    model_dict['seed'] = seed
-                    model_dict['local_size'] = local_size
-                    model_dict['context_size'] = context_size
-                    model_dict['model'] = model
-                    model_dict['smooth_context'] = smooth_context
-                    with open(f'config_{i}.yaml', 'w') as file:
-                        documents = yaml.dump(model_dict, file)
-                    print(i,
-                          model_dict['seed'],
-                          model_dict['local_size'],
-                          model_dict['context_size'])
-                    i += 1
+                model_dict['seed'] = seed
+                model_dict['local_size'] = local_size
+                model_dict['context_size'] = context_size
+                model_dict['model'] = model
+                with open(f'config_{i}.yaml', 'w') as file:
+                    documents = yaml.dump(model_dict, file)
+                print(i,
+                        model_dict['seed'],
+                        model_dict['local_size'],
+                        model_dict['context_size'])
+                i += 1
 
 #seeds = [42, 1337, 9999, 1212, 8585, 6767]
 seeds = [42, 1337]
