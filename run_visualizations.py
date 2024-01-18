@@ -6,7 +6,7 @@ from lib.utils import (
 from lib.visualizations import visualize_trajectory
 
 config = get_default_config([''])
-config['model'] = 'DSVAE'
+config['model'] = 'CDSVAE'
 config['local_size'] = 2
 config['context_size'] = 2
 config['seed'] = 42
@@ -22,8 +22,8 @@ dm = init_data_module(config)
 # to obtain. 
 embed_dict = embed_dataloader(config, model, dm.train_dataloader())
 local_embeddings = embed_dict['local_mean']
-visualize_trajectory(local_embeddings, Path('results/local_DSVAE_trajectory.png'),
-                     'Local DSVAE')
+visualize_trajectory(local_embeddings, Path(f'results/local_{config["model"]}_trajectory.png'),
+                     f'Local {config["model"]}')
 context_embeddings = embed_dict['context_mean']
-visualize_trajectory(context_embeddings, Path('results/context_DSVAE_trajectory.png'),
-                     'Local DSVAE')
+visualize_trajectory(context_embeddings, Path(f'results/context_{config["model"]}_trajectory.png'),
+                     f'Context {config["model"]}')

@@ -84,7 +84,7 @@ def get_hyperparameters(config):
        "beta": tune.loguniform(1e-5, 1e-3),
         # Essentially 'beta' for the context-only model
         "gamma": tune.loguniform(1e-7, 1e-3),
-        "theta": tune.loguniform(1e-7, 1e-2) if config['model'] == 'CDSVAE' else tune.choice([0]),
+        "theta": tune.loguniform(1e-5, 1e-2) if config['model'] == 'CDSVAE' else tune.choice([0]),
         "dropout": tune.choice([0, 0.05, 0.1, 0.25, 0.5])}
     }
 
