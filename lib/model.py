@@ -22,6 +22,7 @@ class BaseModel(pl.LightningModule):
         self.context_size = config['context_size']
         self.input_size = config['data_size']
         self.window_size = config['window_size']
+        self.contrastive_dim = config['contrastive_dim']
         self.num_layers = hyperparameters['num_layers']
         self.spatial_hidden_size = hyperparameters['spatial_hidden_size']
         self.temporal_hidden_size = hyperparameters['temporal_hidden_size']
@@ -43,7 +44,8 @@ class BaseModel(pl.LightningModule):
             'mse',
             'kl_l',
             'kl_c',
-            'cf'
+            'cf',
+            'elbo'
         ]
         # Lightning parameters
         self.automatic_optimization = False
@@ -66,6 +68,7 @@ class BaseModel(pl.LightningModule):
                 output['context_dist'], D.Normal(0., 1.)).mean(dim=1)
         else:
             kl_c = torch.zeros((1, ), device=x.device)
+            smooth_loss = torch.zeros((1, ), device=x.device)
         # Calculate the contrastive loss (in case we are training
         # a contrastive model)
         if output['context_dist_n'] is not None:
@@ -79,16 +82,21 @@ class BaseModel(pl.LightningModule):
                 output['context_dist_n'].mean[..., :self.contrastive_dim])
         else:
             cf_loss = torch.zeros((1, ), device=x.device)
-        loss = (mse + self.anneal * (
-            self.beta * kl_l +
-            self.gamma * kl_c +
-            self.theta * cf_loss)).mean()
+        elbo = (mse + self.anneal * (
+                self.beta * kl_l +
+                self.gamma * kl_c
+        ))
+        # This is to make sure the scheduler optimizes theta
+        # based on the elbo, not based on the cf_loss as well
+        # since it will trivially lead to a very low theta.
+        loss = (elbo + self.anneal * self.theta * cf_loss).mean()
         return loss, {
             'mse': mse.detach().mean(),
             'kl_l': kl_l.detach().mean(),
             'kl_c': kl_c.detach().mean(),
-            'cf': cf_loss.detach().mean()}, (
-                output['local_dist'].mean.detach(),
+            'cf': cf_loss.detach().mean(),
+            'elbo': elbo.detach().mean()
+            }, (output['local_dist'].mean.detach(),
                 output['context_dist'].mean.detach())
 
     def calc_cf_loss(self, x, x_hat_dist, pz_t, p_zg, z_t, z_g):

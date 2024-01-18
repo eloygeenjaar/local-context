@@ -2,15 +2,12 @@ import os
 import ray
 import sys
 import time
-import json
 import torch
 import random
-import importlib
 import numpy as np
 import lightning.pytorch as pl
 from pathlib import Path
 from ray import train, tune
-from lib.data import DataModule
 from ray.tune import CLIReporter
 from ray.train.torch import TorchTrainer
 from ray.tune.schedulers import ASHAScheduler
@@ -21,7 +18,8 @@ from ray.train.lightning import RayTrainReportCallback
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from lib.utils import (
     get_default_config, generate_version_name,
-    get_hyperparameters)
+    get_hyperparameters, load_hyperparameters,
+    init_model, init_data_module)
 
 
 if __name__ == "__main__":
@@ -36,22 +34,18 @@ if __name__ == "__main__":
     torch.manual_seed(config["seed"])
     torch.cuda.manual_seed(config["seed"])
     version = generate_version_name(config)
-    data_module = importlib.import_module('lib.data')
-    dataset_type = getattr(data_module, config['dataset'])
-    model_module = importlib.import_module('lib.model')
-    model_type = getattr(model_module, config['model'])
     early_stopping = EarlyStopping(
         monitor="va_loss", mode="min", patience=50)
 
     def train_tune(hyperparameters):
         torch.set_float32_matmul_precision('medium')
-        dm = DataModule(config, dataset_type, config["batch_size"])
-        model = model_type(config, hyperparameters, viz)
+        dm = init_data_module(config)
+        model = init_model(config, hyperparameters, viz)
         model = ray.train.torch.prepare_model(model)
         kwargs_tr = {
             "devices": "auto",
             "accelerator": "auto",
-            "callbacks": [RayTrainReportCallback()],
+            "callbacks": [RayTrainReportCallback(), early_stopping],
             "strategy": ray.train.lightning.RayDDPStrategy(find_unused_parameters=True),
             "plugins": [ray.train.lightning.RayLightningEnvironment()],
             "enable_progress_bar": False,
@@ -77,7 +71,7 @@ if __name__ == "__main__":
     # Initialize the scheduler
     scheduler = ASHAScheduler(
         time_attr='training_iteration',
-        metric='va_loss',
+        metric='va_elbo',
         mode='min',
         max_t=scheduler_epochs,
         grace_period=50 if not test else 1,
@@ -90,13 +84,13 @@ if __name__ == "__main__":
 
     # Initialize the algorithm with which we select future hyperparameters
     # to run the model with
-    algo = OptunaSearch(metric="va_loss", mode="min")
+    algo = OptunaSearch(metric="va_elbo", mode="min")
 
     # A reporter that makes it easy to keep track of the status for each of
     # the models
     reporter = CLIReporter(
         parameter_columns=hyperparameters["train_loop_config"].keys(),
-        metric_columns=["tr_loss", "tr_mse", "tr_acc", "va_loss", "va_mse", "va_acc"],
+        metric_columns=["tr_loss", "tr_mse", "tr_acc", "va_loss", "va_mse", "va_acc", "va_elbo"],
     )
 
     # Initialize the TorchTrainer with the above training function
@@ -117,7 +111,6 @@ if __name__ == "__main__":
             progress_reporter=reporter,
             failure_config=FailureConfig(max_failures=2)
        ))
-    
     # The tuner will try to find the best hyperparameter configuration
     # using the search algorithm and the scheduler, which decides
     # whether a model with certain hyperparameters is better than 
@@ -139,14 +132,13 @@ if __name__ == "__main__":
 
     # Get the best result from the tuner
     best_result = result_grid.get_best_result( 
-        metric="va_loss", mode="min")
+        metric="va_elbo", mode="min")
     # Get the checkpoint at which this model is saved
     best_checkpoint = best_result.checkpoint
 
     # Get the hyperparameters of the model
     params_p = Path(best_checkpoint.path).parent / 'params.json'
-    with params_p.open('r') as f:
-        params = json.load(f)
+    hyperparameters = load_hyperparameters(params_p)
     
     # Delete all the worse models' checkpoints to save disk space
     for result in result_grid:
@@ -158,7 +150,7 @@ if __name__ == "__main__":
     # model
     final_trainer = TorchTrainer(
         train_loop_per_worker=train_tune,
-        train_loop_config=params['train_loop_config'],
+        train_loop_config=hyperparameters,
         scaling_config=ScalingConfig(num_workers=1, use_gpu=True,
                                      resources_per_worker={"CPU": 4, "GPU": 1}),
         run_config=ray.train.RunConfig(
