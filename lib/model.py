@@ -273,7 +273,6 @@ class CIDSVAE(CDSVAE):
             hidden_size=self.temporal_hidden_size, independence=True,
             dropout_val=self.dropout)
 
-
 class CO(BaseModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
