@@ -81,10 +81,10 @@ def get_hyperparameters(config):
        "lr": tune.loguniform(1e-4, 2e-3),
         "batch_size": tune.choice([64, 128]),
         # Unused parameter for Context-only model
-       "beta": tune.loguniform(1e-5, 1e-3),
+       "beta": tune.loguniform(5e-5, 1e-3),
         # Essentially 'beta' for the context-only model
-        "gamma": tune.loguniform(1e-7, 1e-3),
-        "theta": tune.loguniform(1e-5, 1e-2) if config['model'] == 'CDSVAE' else tune.choice([0]),
+        "gamma": tune.loguniform(1e-6, 1e-3),
+        "theta": tune.loguniform(1e-4, 1e-2) if config['model'] == 'CDSVAE' else tune.choice([0]),
         "dropout": tune.choice([0, 0.05, 0.1, 0.25, 0.5])}
     }
 
