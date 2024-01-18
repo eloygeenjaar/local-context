@@ -1,9 +1,9 @@
 dataset: ICAfBIRN
-model: DSVAE
+model: CDSVAE
 
 local_size: 2
 context_size: 2
-contrastive_dim: 0
+contrastive_dim: 2
 
 num_layers: 3
 spatial_hidden_size: 128
