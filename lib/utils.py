@@ -69,7 +69,9 @@ def generate_version_name(config):
         f'd{config["dataset"]}_' \
         f's{config["seed"]}_' \
         f's{config["local_size"]}_' \
-        f'g{config["context_size"]}'
+        f'g{config["context_size"]}' \
+        f'ws{config["window_size"]}' \
+        f'ss{config["window_step"]}'
     return version
 
 def get_hyperparameters(config):

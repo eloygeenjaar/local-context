@@ -18,4 +18,4 @@ seed: 101010
 
 data_size: 53
 window_size: 20
-window_step: 5
+window_step: 1

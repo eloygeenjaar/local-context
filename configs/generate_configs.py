@@ -7,7 +7,7 @@ with Path('./default.yaml').open('r') as f:
 i = 0
 #seeds = [42, 1337, 9999, 1212, 8585, 6767]
 seeds = [42, 1337]
-models = ['DSVAE', 'CDSVAE', 'IDSVAE']
+models = ['DSVAE', 'CIDSVAE', 'CDSVAE', 'IDSVAE']
 #local_sizes = [2, 4, 8]
 #context_sizes = [2, 4, 8, 16]
 local_sizes = [2]
@@ -26,7 +26,8 @@ for seed in seeds:
                 print(i,
                         model_dict['seed'],
                         model_dict['local_size'],
-                        model_dict['context_size'])
+                        model_dict['context_size'],
+                        model_dict['model'])
                 i += 1
 
 #seeds = [42, 1337, 9999, 1212, 8585, 6767]
