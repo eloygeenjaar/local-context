@@ -5,6 +5,7 @@ import importlib
 import numpy as np
 import pandas as pd
 import lightning.pytorch as pl
+from typing import Dict
 from ray import tune
 from pathlib import Path
 from torch.utils.data import DataLoader
@@ -93,20 +94,20 @@ def load_hyperparameters(p: Path):
         hyperparameters = json.load(f)
     return hyperparameters['train_loop_config']
 
-def init_data_module(config, shuffle_train=False):
+def init_data_module(config, shuffle_train=False) -> DataModule:
     data_module = importlib.import_module('lib.data')
     dataset_type = getattr(data_module, config['dataset'])
     dm = DataModule(config, dataset_type, shuffle_train=shuffle_train)
     dm.setup()
     return dm
     
-def init_model(config, hyperparameters, viz):   
+def init_model(config, hyperparameters, viz) -> pl.LightningModule:   
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
     model = model_type(config, hyperparameters, viz)
     return model
 
-def embed_dataloader(config, model, dataloader):
+def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
     num_subjects = dataloader.dataset.num_subjects
     num_windows = dataloader.dataset.num_windows
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -140,7 +141,7 @@ def embed_dataloader(config, model, dataloader):
         output_dict[key] = output_dict[key].cpu()
     return output_dict
 
-def embed_all(config, model, data_module):
+def embed_all(config, model, data_module) -> Dict[str, Dict[str, torch.Tensor]]:
     return {
         'train': embed_dataloader(config, model, data_module.train_dataloader()),
         'valid': embed_dataloader(config, model, data_module.val_dataloader()),
