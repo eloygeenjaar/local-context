@@ -1,10 +1,11 @@
 import torch
 from torch import nn
 from torch import distributions as D
+from torch.nn import functional as F
 
 
 class LocalEncoder(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
+    def __init__(self, input_size, hidden_size, output_size, dropout_val):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -18,6 +19,7 @@ class LocalEncoder(nn.Module):
         self.prior_mu = nn.Linear(hidden_size, output_size)
         self.prior_lv = nn.Linear(hidden_size, output_size)
         self.bigru_h = nn.Parameter(torch.randn(2, 1, hidden_size))
+        self.dropout = nn.Dropout(dropout_val)
 
     def forward(self, x, h_prior=None):
         num_timesteps, batch_size, _ = x.size()
@@ -31,6 +33,7 @@ class LocalEncoder(nn.Module):
         # Causal (time-wise, not as in causality) generation of the local
         # features
         local_features, _ = self.gru(local_features, h_prior)
+        local_features = self.dropout(local_features)
         # Map to mean and standard deviation for normal distribution
         local_mu = self.local_mu(local_features)
         local_sd = (0.5 * self.local_lv(local_features)).exp()
@@ -44,6 +47,7 @@ class LocalEncoder(nn.Module):
         # Causal (time-wise, not as in causality) generation of the prior
         # the prior is generally learned for the local features
         ht_p, _ = self.prior_local(i_zeros, h_prior)
+        ht_p = self.dropout(ht_p)
         prior_mu = self.prior_mu(ht_p)
         prior_sd = (0.5 * self.prior_lv(ht_p)).exp()
         prior_dist = D.Normal(prior_mu, prior_sd)
@@ -51,7 +55,7 @@ class LocalEncoder(nn.Module):
 
 
 class TemporalEncoder(nn.Module):
-    def __init__(self, input_size, local_size, context_size, hidden_size=256,
+    def __init__(self, input_size, local_size, context_size, dropout_val, hidden_size=256,
                  independence=False):
         super().__init__()
         self.input_size = input_size
@@ -59,17 +63,14 @@ class TemporalEncoder(nn.Module):
         self.hidden_size = hidden_size
         self.context_size = context_size
         self.independence = independence
-        # TODO: Add dropout as hyperparameter
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(dropout_val)
         self.context_gru = nn.GRU(
             input_size=input_size, hidden_size=hidden_size, bidirectional=True)
-        self.context_mlp = nn.Sequential(
-            nn.Linear(2 * hidden_size, 128), nn.ELU(), nn.Linear(128, 64))
-        self.context_lin = nn.Linear(2 * hidden_size, 64)
-        self.context_mu = nn.Linear(64, context_size)
+        self.context_mu = nn.Linear(2 * hidden_size, context_size)
+        self.context_lv = nn.Linear(2 * hidden_size, context_size)
         self.local_encoder = LocalEncoder(
             input_size if independence else input_size + context_size,
-            hidden_size, local_size)
+            hidden_size, local_size, dropout_val=dropout_val)
         self.context_to_prior = nn.Linear(context_size, hidden_size)
 
     def get_context(self, x):
@@ -79,9 +80,9 @@ class TemporalEncoder(nn.Module):
         hT_g = torch.reshape(
             hT_g.permute(1, 0, 2), (batch_size, 2 * self.hidden_size))
         hT_g = self.dropout(hT_g)
-        hT_g = self.context_mlp(hT_g)
         context_mu = self.context_mu(hT_g)
-        context_dist = D.Normal(context_mu, 0.1)
+        context_sd = F.softplus(self.context_lv(hT_g))
+        context_dist = D.Normal(context_mu, context_sd)
         context_z = context_dist.rsample()
         return context_dist, context_z
 
@@ -108,7 +109,7 @@ class TemporalEncoder(nn.Module):
 
 class LocalDecoder(nn.Module):
     def __init__(self, input_size: int, hidden_size: int,
-                 output_size: int, num_layers: int):
+                 output_size: int, num_layers: int, dropout_val: float):
         super().__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -124,12 +125,14 @@ class LocalDecoder(nn.Module):
         else:
             self.layers.extend([
                 nn.Linear(input_size, hidden_size),
-                nn.ELU()]
+                nn.ELU(),
+                nn.Dropout(dropout_val)]
             )
             for _ in range(self. num_layers - 2):
                 self.layers.extend([
                     nn.Linear(hidden_size, hidden_size),
-                    nn.ELU()]
+                    nn.ELU(),
+                    nn.Dropout(dropout_val)]
                 )
             self.layers.append(
                 nn.Linear(hidden_size, output_size)

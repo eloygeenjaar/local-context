@@ -1,20 +1,11 @@
 import torch
 import numpy as np
 import nibabel as nb
-import lightning.pytorch as pl
 from nilearn import signal
-from lib.utils import get_icafbirn
+from lib.definitions import comp_ix
 from torch.utils.data import Dataset, DataLoader
+from lib.utils import get_icafbirn, normal_sampling
 
-
-comp_ix = [
-    68, 52, 97, 98, 44,
-    20, 55,
-    2, 8, 1, 10, 26, 53, 65, 79, 71,
-    15, 4, 61, 14, 11, 92, 19, 7, 76,
-    67, 32, 42, 69, 60, 54, 62, 78, 83, 95, 87, 47, 80, 36, 66, 37, 82,
-    31, 39, 22, 70, 16, 50, 93,
-    12, 17, 3, 6]
 
 
 class ICAfBIRN(Dataset):
@@ -50,13 +41,22 @@ class ICAfBIRN(Dataset):
         self.data = []
         for (i, row) in self.df.iterrows():
             x = nb.load(row['path']).get_fdata()[:150, comp_ix]
+<<<<<<< HEAD
             # x = signal.clean(
             #     x, detrend=True,
             #     standardize='zscore_sample', t_r=2.0,
             #     low_pass=0.15, high_pass=0.008)
+=======
+            x = signal.clean(
+                x, detrend=True,
+                standardize='zscore_sample', t_r=2.0,
+                low_pass=0.20, high_pass=0.008)
+>>>>>>> main
             self.data.append(x)
         self.data = np.stack(self.data, axis=0)
         self.data = torch.from_numpy(self.data)
+
+        self.rng = np.random.default_rng(seed)
 
     def __len__(self):
         return self.num_subjects * self.num_windows
@@ -72,11 +72,10 @@ class ICAfBIRN(Dataset):
         # Obtain the temporal index
         temp_ix = ix % self.num_windows
         # Generate positive self-supervised samples
-        # TODO: Add a way to also sample a window 2 steps away
-        min_pos_ix = max(0, temp_ix - 1)
-        max_pos_ix = min(self.num_windows-1, temp_ix+1)
-        pos_ix = np.random.choice(np.array([min_pos_ix, max_pos_ix]))
-
+        pos_ix = normal_sampling(
+            self.rng, current_ix=temp_ix, length=self.num_windows,
+            sd=2.0)
+        pos_ix = temp_ix
         start_window = temp_ix * self.window_step
         end_window = start_window + self.window_size
         # The positive self-supervised sample window
@@ -152,34 +151,3 @@ class Test(Dataset):
             self.data[subj_ix, start_window:end_window],
             (subj_ix, temp_ix),
             self.targets[subj_ix])
-
-
-class DataModule(pl.LightningDataModule):
-    def __init__(self, config, dataset_type, batch_size=128):
-        super().__init__()
-        self.config = config
-        self.dataset_type = dataset_type
-        self.batch_size = batch_size
-
-    def setup(self, stage=None):
-        self.train_dataset = self.dataset_type(
-            'train', self.config['seed'], self.config['window_size'], self.config['window_step'])
-        self.valid_dataset = self.dataset_type(
-            'valid', self.config['seed'], self.config['window_size'], self.config['window_step'])
-        self.test_dataset = self.dataset_type(
-            'test', self.config['seed'], self.config['window_size'], self.config['window_step'])
-
-    def train_dataloader(self):
-        return DataLoader(self.train_dataset, num_workers=5, pin_memory=True,
-                          batch_size=self.config["batch_size"], shuffle=True,
-                          persistent_workers=True, prefetch_factor=5, drop_last=False)
-
-    def val_dataloader(self):
-        return DataLoader(self.valid_dataset, num_workers=5, pin_memory=True,
-                          batch_size=2048, shuffle=False,
-                          persistent_workers=True, prefetch_factor=5, drop_last=False)
-
-    def test_dataloader(self):
-        return DataLoader(self.test_dataset, num_workers=5, pin_memory=True,
-                          batch_size=self.config["batch_size"], shuffle=False,
-                          persistent_workers=True, prefetch_factor=5, drop_last=False)

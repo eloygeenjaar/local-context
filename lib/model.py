@@ -18,21 +18,22 @@ from sklearn.linear_model import LogisticRegression
 class BaseModel(pl.LightningModule):
     def __init__(self, num_layers, spatial_hidden_size, temporal_hidden_size, lr, batch_size, beta, gamma, theta):
         super().__init__()
-        self.local_size = 2
-        self.context_size = 2
-        self.input_size = 53 #data_size
-        self.window_size = 20
-        self.window_step = 5
-        self.contrastive_dim = 0
-        self.batch_size = batch_size
-        self.num_layers = num_layers
-        self.spatial_hidden_size = spatial_hidden_size
-        self.temporal_hidden_size = temporal_hidden_size
+        self.local_size = config['local_size']
+        self.context_size = config['context_size']
+        self.input_size = config['data_size']
+        self.window_size = config['window_size']
+        self.contrastive_dim = config['contrastive_dim']
+        self.num_layers = hyperparameters['num_layers']
+        self.spatial_hidden_size = hyperparameters['spatial_hidden_size']
+        self.temporal_hidden_size = hyperparameters['temporal_hidden_size']
+        self.dropout = hyperparameters['dropout']
         self.spatial_decoder = LocalDecoder(
-            self.local_size + self.context_size, spatial_hidden_size,
-            self.input_size, num_layers)
-        self.lr = lr
-        self.seed = 42
+            config['local_size'] + config['context_size'],
+            config['spatial_hidden_size'],
+            config['data_size'], hyperparameters['num_layers'],
+            dropout_val=hyperparameters['dropout'])
+        self.lr = hyperparameters['lr']
+        self.seed = config['seed']
         # Loss function hyperparameters
         self.beta = beta
         self.gamma = gamma
@@ -42,11 +43,11 @@ class BaseModel(pl.LightningModule):
             'mse',
             'kl_l',
             'kl_c',
-            'cf'
+            'cf',
+            'elbo'
         ]
         # Lightning parameters
         self.automatic_optimization = False
-        self.save_hyperparameters()
 
     def forward(self, x, x_p):
         raise NotImplementedError
@@ -66,6 +67,7 @@ class BaseModel(pl.LightningModule):
                 output['context_dist'], D.Normal(0., 1.)).mean(dim=1)
         else:
             kl_c = torch.zeros((1, ), device=x.device)
+            smooth_loss = torch.zeros((1, ), device=x.device)
         # Calculate the contrastive loss (in case we are training
         # a contrastive model)
         if output['context_dist_n'] is not None:
@@ -79,16 +81,21 @@ class BaseModel(pl.LightningModule):
                 output['context_dist_n'].mean[..., :self.contrastive_dim])
         else:
             cf_loss = torch.zeros((1, ), device=x.device)
-        loss = (mse + self.anneal * (
-            self.beta * kl_l +
-            self.gamma * kl_c +
-            self.theta * cf_loss)).mean()
+        elbo = (mse + self.anneal * (
+                self.beta * kl_l +
+                self.gamma * kl_c
+        ))
+        # This is to make sure the scheduler optimizes theta
+        # based on the elbo, not based on the cf_loss as well
+        # since it will trivially lead to a very low theta.
+        loss = (elbo + self.anneal * self.theta * cf_loss).mean()
         return loss, {
             'mse': mse.detach().mean(),
             'kl_l': kl_l.detach().mean(),
             'kl_c': kl_c.detach().mean(),
-            'cf': cf_loss.detach().mean()}, (
-                output['local_dist'].mean.detach(),
+            'cf': cf_loss.detach().mean(),
+            'elbo': elbo.detach().mean()
+            }, (output['local_dist'].mean.detach(),
                 output['context_dist'].mean.detach())
 
     def calc_cf_loss(self, x, x_hat_dist, pz_t, p_zg, z_t, z_g):
@@ -104,7 +111,7 @@ class BaseModel(pl.LightningModule):
         # Optimization
         opt.zero_grad()
         self.manual_backward(loss)
-        nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
+        #nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
         opt.step()
         self.anneal = min(1.0, self.anneal + 1/5000)
         train_dict = {f'tr_{l_key}': output[l_key] for l_key in self.loss_keys}
@@ -164,7 +171,7 @@ class BaseModel(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, factor=0.90, patience=5, verbose=True)
+            optimizer, factor=0.90, patience=10, verbose=True)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
     def on_validation_epoch_end(self):
@@ -178,7 +185,7 @@ class DSVAE(BaseModel):
         super().__init__(*args, **kwargs)
         self.temporal_encoder = TemporalEncoder(
             self.input_size, self.local_size, self.context_size,
-            self.temporal_hidden_size)
+            hidden_size=self.temporal_hidden_size, dropout_val=self.dropout)
 
     def forward(self, x, x_p):
         context_dist, local_dist, prior_dist, z = self.temporal_encoder(x)
@@ -201,7 +208,8 @@ class LVAE(BaseModel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.local_encoder = LocalEncoder(
-            self.input_size, self.temporal_hidden_size, self.local_size)
+            self.input_size, self.temporal_hidden_size, self.local_size,
+            dropout_val=self.dropout)
 
     def forward(self, x, x_p):
         local_dist, prior_dist = self.local_encoder(x)
@@ -222,7 +230,7 @@ class CDSVAE(BaseModel):
         super().__init__(*args, **kwargs)
         self.temporal_encoder = TemporalEncoder(
             self.input_size, self.local_size, self.context_size,
-            self.temporal_hidden_size)
+            hidden_size=self.temporal_hidden_size, dropout_val=self.dropout)
         self.cf_loss = InfoNCE()
         self.tau = 1.
 
@@ -253,7 +261,8 @@ class IDSVAE(DSVAE):
         super().__init__(*args, **kwargs)
         self.temporal_encoder = TemporalEncoder(
             self.input_size, self.local_size, self.context_size,
-            self.temporal_hidden_size, independence=True)
+            hidden_size=self.temporal_hidden_size, independence=True,
+            dropout_val=self.dropout)
 
 
 class CO(BaseModel):
