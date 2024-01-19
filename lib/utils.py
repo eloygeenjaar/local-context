@@ -75,17 +75,17 @@ def generate_version_name(config):
 def get_hyperparameters(config):
     return {"train_loop_config": {
         # Unused parameter for Context-only model
-        "num_layers": tune.choice([1, 2, 3, 4, 5]) if not config['model'] == 'CO' else tune.choice([1]),
+        "num_layers": tune.choice([1, 2, 3, 4, 5, 6]) if not config['model'] == 'CO' else tune.choice([1]),
         "spatial_hidden_size": tune.choice([64, 128, 256]),
         # Unused parameter for Context-only model
         "temporal_hidden_size": tune.choice([128, 256, 512]) if not config['model'] == 'CO' else tune.choice([128]),
        "lr": tune.loguniform(1e-4, 2e-3),
         "batch_size": tune.choice([64, 128]),
         # Unused parameter for Context-only model
-       "beta": tune.loguniform(5e-5, 1e-3),
+        "beta": tune.loguniform(1e-4, 1e-1),
         # Essentially 'beta' for the context-only model
-        "gamma": tune.loguniform(1e-6, 1e-3),
-        "theta": tune.loguniform(1e-4, 1e-2) if config['model'] == 'CDSVAE' else tune.choice([0]),
+        "gamma": tune.loguniform(1e-5, 1e-1),
+        "theta": tune.loguniform(1e-4, 1e-1) if config['model'] == 'CDSVAE' else tune.choice([0]),
         "dropout": tune.choice([0, 0.05, 0.1, 0.25, 0.5])}
     }
 

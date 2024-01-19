@@ -57,7 +57,7 @@ class BaseModel(pl.LightningModule):
         # Output is a dictionary
         output = self.forward(x, x_p)
         # Calculate reconstruction loss
-        mse = F.mse_loss(output['x_hat'], x, reduction='none').mean(dim=(0, 2))
+        mse = -D.Normal(output['x_hat'], 0.1).log_prob(x).mean(dim=(0, 2))
         # Calculate the kl-divergence for the local representations
         kl_l = D.kl.kl_divergence(
             output['local_dist'],

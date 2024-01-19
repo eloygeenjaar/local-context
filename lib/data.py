@@ -61,7 +61,8 @@ class ICAfBIRN(Dataset):
         x = self.data[subj_ix]
         x = x.float()
         # Obtain the subject's diagnosis
-        y = self.df.loc[self.indices[subj_ix], 'sz'] == 2
+        # True is schizophrenia
+        y = self.df.loc[self.indices[subj_ix], 'sz'] == 1
         # Obtain the temporal index
         temp_ix = ix % self.num_windows
         # Generate positive self-supervised samples
