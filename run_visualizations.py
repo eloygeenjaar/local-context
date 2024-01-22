@@ -6,15 +6,18 @@ from lib.utils import (
 from lib.visualizations import (
     visualize_trajectory,
     visualize_space,
-    visualize_reconstruction)
+    visualize_reconstruction,
+    visualize_space_inputs,
+    jonker_volgenant)
 from sklearn.cluster import KMeans
 
 
 visualizations_possible = [
     'context_space', 'trajectory', 'reconstruction',
-    'reconstruction_fnc'
+    'reconstruction_fnc', 'space_inputs',
+    'jonker_volgenant'
 ]
-visualizations = ['reconstruction']
+visualizations = ['jonker_volgenant']
 
 config = get_default_config([''])
 config['model'] = 'CDSVAE'
@@ -62,7 +65,40 @@ if 'reconstruction' in visualizations:
     reconstructions = embed_dict['reconstruction']
     visualize_reconstruction(original_inputs, reconstructions, Path(f'results/reconstruction_{config["model"]}.png'),
                              f'{config["model"]}')
-    print(original_inputs.shape, reconstructions.shape)
-    
-if 'fnc_reconstruction' in visualizations:
-    pass
+
+if 'space_inputs' in visualizations:
+    original_inputs = embed_dict['input']
+    context_embeddings = embed_dict['context_mean']
+    targets = embed_dict['target']
+    y_dict = {
+        0: {'name': 'C', 'color': 'b'},
+        1: {'name': 'SZ', 'color': 'r'}
+    }
+    visualize_space_inputs(
+        original_inputs,
+        context_embeddings, Path(f'results/context_{config["model"]}_space_inputs.png'),
+        f'Context {config["model"]}', y=targets, y_dict=y_dict)
+
+if 'jonker_volgenant' in visualizations:
+    original_inputs = embed_dict['input']
+    context_embeddings = embed_dict['context_mean']
+    targets = embed_dict['target']
+    y_dict = {
+        0: {'name': 'C', 'color': 'b'},
+        1: {'name': 'SZ', 'color': 'r'}
+    }
+    jonker_volgenant(
+        original_inputs,
+        context_embeddings, Path(f'results/context_{config["model"]}_jonker_volgenant.png'),
+        f'Context {config["model"]}', y=targets, y_dict=y_dict)
+    original_inputs = embed_dict['input']
+    context_embeddings = embed_dict['context_mean']
+    targets = embed_dict['target']
+    y_dict = {
+        0: {'name': 'C', 'color': 'b'},
+        1: {'name': 'SZ', 'color': 'r'}
+    }
+    jonker_volgenant(
+        original_inputs,
+        original_inputs, Path(f'results/input_jonker_volgenant.png'),
+        f'Input', y=targets, y_dict=y_dict)
