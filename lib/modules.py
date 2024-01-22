@@ -116,6 +116,7 @@ class LocalDecoder(nn.Module):
         self.output_size = output_size
         self.num_layers = num_layers
         self.layers = nn.ModuleList()
+        self.act = nn.ELU
         # Just a linear layer
         if self.num_layers == 1:
             self.layers.append(
@@ -125,13 +126,13 @@ class LocalDecoder(nn.Module):
         else:
             self.layers.extend([
                 nn.Linear(input_size, hidden_size),
-                nn.ELU(),
+                self.act(),
                 nn.Dropout(dropout_val)]
             )
             for _ in range(self. num_layers - 2):
                 self.layers.extend([
                     nn.Linear(hidden_size, hidden_size),
-                    nn.ELU(),
+                    self.act(),
                     nn.Dropout(dropout_val)]
                 )
             self.layers.append(
