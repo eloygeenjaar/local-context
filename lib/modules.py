@@ -106,6 +106,35 @@ class TemporalEncoder(nn.Module):
         z = torch.cat((local_z, context_z), dim=-1)
         return context_dist, local_dist, prior_dist, z
 
+    def generate_counterfactual(self, x, cf_context):
+        # The input to this function should essentiall look like this:
+        # x: (num_timesteps, batch_size, data_size)
+        # cf_context: (batch_size, context_size)
+        # Each subject in the batch should be a subject we want to 
+        # generate a counterfactual for, where
+        # each entry in the cf_context batch should correspond
+        # to the counterfactual context we should use for the 
+        # corresponding subject in x.
+        num_timesteps, batch_size, _ = x.size()
+        context_dist, _ = self.get_context(x)
+        context_z = context_dist.mean
+        context_z = torch.cat((
+            context_z.unsqueeze(0).repeat(num_timesteps, 1, 1),
+            cf_context.unsqueeze(0).repeat(num_timesteps, 1, 1)), dim=1)
+        # Repeat along batch so we generate both non-cf and cf
+        # The first batch_size subjects are non-cf
+        # and the second batch_size entries are cfs
+        x = x.repeat(1, 2, 1)
+        if self.independence:
+            context_input = x
+        else:
+            context_input = torch.cat((x, context_z), dim=-1)
+        h_prior = torch.zeros((1, 2 * batch_size, self.hidden_size),
+                              device=x.device)
+        local_dist, prior_dist = self.local_encoder(context_input, h_prior)
+        z = torch.cat((local_dist.mean, context_z), dim=-1)
+        return local_dist.mean.view(num_timesteps, 2, batch_size, self.local_size), z
+
 
 class LocalDecoder(nn.Module):
     def __init__(self, input_size: int, hidden_size: int,

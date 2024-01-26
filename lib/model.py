@@ -11,7 +11,7 @@ from torch.nn import functional as F
 from sklearn.decomposition import PCA
 from .modules import (
     TemporalEncoder, LocalEncoder, LocalDecoder,
-    ConvContextEncoder, ConvContextDecoder)
+    ConvContextEncoder, ConvContextDecoder, FastTemporalEncoder)
 from sklearn.linear_model import LogisticRegression
 
 
@@ -203,6 +203,20 @@ class DSVAE(BaseModel):
     def embed_context(self, x):
         return self.temporal_encoder.get_context(x)[0]
 
+    def generate_counterfactual(self, x, cf_context):
+        # The input to this function should essentiall look like this:
+        # x: (num_timesteps, batch_size, data_size)
+        # cf_context: (batch_size, context_size)
+        # Each subject in the batch should be a subject we want to 
+        # generate a counterfactual for, where
+        # each entry in the cf_context batch should correspond
+        # to the counterfactual context we should use for the 
+        # corresponding subject in x.
+        # Context: (2, batch_size, context_size)
+        # Local: (num_timesteps, 2, batch_size, local_size)
+        # The 2 dimensions are: 0: non-cf, 1: cf
+        context, local = self.temporal_encoder.generate_counterfactual(x, cf_context)
+        
 
 class LVAE(BaseModel):
     # Local VAE (only has a local encoder, not a local and context encoder)
@@ -256,6 +270,26 @@ class CDSVAE(BaseModel):
 
     def embed_context(self, x):
         return self.temporal_encoder.get_context(x)[0]
+
+    def generate_counterfactual(self, x, cf_context):
+        # The input to this function should essentiall look like this:
+        # x: (num_timesteps, batch_size, data_size)
+        # cf_context: (batch_size, context_size)
+        # Each subject in the batch should be a subject we want to 
+        # generate a counterfactual for, where
+        # each entry in the cf_context batch should correspond
+        # to the counterfactual context we should use for the 
+        # corresponding subject in x.
+        # Context_z: (num_timesteps, 2, batch_size, context_size)
+        # Context: (2, batch_size, context_size)
+        # Local: (num_timesteps, 2, batch_size, local_size)
+        # The 2 dimensions are: 0: non-cf, 1: cf
+        num_timesteps, batch_size, data_size = x.size()
+        local, z = self.temporal_encoder.generate_counterfactual(x, cf_context)
+        x_hat = self.spatial_decoder(z)
+        x_hat = x_hat.view(num_timesteps, 2, batch_size, data_size)
+        return local, x_hat
+
 
 class IDSVAE(DSVAE):
     def __init__(self, *args, **kwargs):
