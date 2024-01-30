@@ -89,10 +89,12 @@ def get_hyperparameters(config):
         "dropout": tune.choice([0, 0.05, 0.1, 0.25, 0.5])}
     }
 
+
 def load_hyperparameters(p: Path):
     with p.open('r') as f:
         hyperparameters = json.load(f)
     return hyperparameters['train_loop_config']
+
 
 def init_data_module(config, shuffle_train=False) -> DataModule:
     data_module = importlib.import_module('lib.data')
@@ -100,7 +102,8 @@ def init_data_module(config, shuffle_train=False) -> DataModule:
     dm = DataModule(config, dataset_type, shuffle_train=shuffle_train)
     dm.setup()
     return dm
-    
+
+
 def init_model(config, hyperparameters, viz, ckpt_path=None) -> pl.LightningModule:   
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
@@ -108,6 +111,7 @@ def init_model(config, hyperparameters, viz, ckpt_path=None) -> pl.LightningModu
     if ckpt_path is not None:
         model.load_state_dict(torch.load(ckpt_path)['state_dict'])
     return model
+
 
 def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
     num_subjects = dataloader.dataset.num_subjects
@@ -143,12 +147,14 @@ def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
         output_dict[key] = output_dict[key].cpu()
     return output_dict
 
+
 def embed_all(config, model, data_module) -> Dict[str, Dict[str, torch.Tensor]]:
     return {
         'train': embed_dataloader(config, model, data_module.train_dataloader()),
         'valid': embed_dataloader(config, model, data_module.val_dataloader()),
         'test': embed_dataloader(config, model, data_module.test_dataloader())
     }
+
 
 def normal_sampling(rng, current_ix: int, length: int, sd: float):
     sample = int(np.round(rng.normal(0, sd), 0))

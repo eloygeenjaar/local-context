@@ -55,7 +55,8 @@ class LocalEncoder(nn.Module):
 
 
 class TemporalEncoder(nn.Module):
-    def __init__(self, input_size, local_size, context_size, dropout_val, hidden_size=256,
+    def __init__(self, input_size, local_size,
+                 context_size, dropout_val, hidden_size=256,
                  independence=False):
         super().__init__()
         self.input_size = input_size

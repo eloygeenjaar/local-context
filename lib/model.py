@@ -56,6 +56,9 @@ class BaseModel(pl.LightningModule):
     def elbo(self, x, x_p):
         # Output is a dictionary
         output = self.forward(x, x_p)
+        upsampling = x.size(0) // self.window_size
+        if upsampling > 1:
+            x = x[(upsampling // 2)::upsampling]
         # Calculate reconstruction loss
         mse = -D.Normal(output['x_hat'], 0.1).log_prob(x).mean(dim=(0, 2))
         # Calculate the kl-divergence for the local representations
@@ -216,7 +219,12 @@ class DSVAE(BaseModel):
         # Local: (num_timesteps, 2, batch_size, local_size)
         # The 2 dimensions are: 0: non-cf, 1: cf
         context, local = self.temporal_encoder.generate_counterfactual(x, cf_context)
-        
+        num_timesteps, batch_size, data_size = x.size()
+        local, z = self.temporal_encoder.generate_counterfactual(x, cf_context)
+        x_hat = self.spatial_decoder(z)
+        x_hat = x_hat.view(num_timesteps, 2, batch_size, data_size)
+        return local, x_hat
+
 
 class LVAE(BaseModel):
     # Local VAE (only has a local encoder, not a local and context encoder)
@@ -251,6 +259,17 @@ class CDSVAE(BaseModel):
 
     def forward(self, x, x_p):
         context_dist, local_dist, prior_dist, z = self.temporal_encoder(x)
+        upsampling = x.size(0) // self.window_size
+        if upsampling > 1:
+            z = z[(upsampling // 2)::upsampling]
+            local_dist = D.Normal(
+                local_dist.mean[(upsampling // 2)::upsampling],
+                local_dist.stddev[(upsampling // 2)::upsampling]
+            )
+            prior_dist = D.Normal(
+                prior_dist.mean[(upsampling // 2)::upsampling],
+                prior_dist.stddev[(upsampling // 2)::upsampling]
+            )
         # Create negative example
         # (another window in the batch, which is randomized)
         x_n = x[:, torch.randperm(x.size(1))]

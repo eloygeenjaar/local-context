@@ -5,7 +5,7 @@ from nilearn import signal
 from lib.definitions import comp_ix
 from torch.utils.data import Dataset, DataLoader
 from lib.utils import get_icafbirn, normal_sampling
-
+from scipy.interpolate import CubicSpline
 
 
 class ICAfBIRN(Dataset):
@@ -81,6 +81,29 @@ class ICAfBIRN(Dataset):
             x[start_window_pos:end_window_pos],
             (subj_ix, temp_ix),
             y)
+
+
+class UpsampledICAfBIRN(ICAfBIRN):
+    def __init__(self, data_type: str, seed: int,
+                 window_size: int, window_step: int):
+        super().__init__(data_type, seed, window_size, window_step)
+        self.TR = 2.0
+        original_timesteps = np.arange(
+            0, self.num_timesteps * self.TR, self.TR)
+        subsampling = 4
+        timesteps_ups = np.arange(
+            - self.TR / 2, self.num_timesteps * self.TR - (self.TR / 2),
+            self.TR / subsampling)
+        data_ups = []
+        for subj_i in range(self.data.size(0)):
+            comp_ups = []
+            for comp_i in range(self.data.size(-1)):
+                spl = CubicSpline(
+                    original_timesteps, self.data[subj_i, :, comp_i])
+                comp_ups.append(spl(timesteps_ups))
+            data_ups.append(np.stack(comp_ups, axis=-1))
+        print(np.stack(data_ups, axis=0).shape)
+        self.data = np.stack(data_ups, axis=0)
 
 
 class Simulation(Dataset):

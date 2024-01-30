@@ -1,4 +1,4 @@
-dataset: ICAfBIRN
+dataset: UpsampledICAfBIRN
 model: CDSVAE
 
 local_size: 2
