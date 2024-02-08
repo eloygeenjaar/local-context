@@ -70,9 +70,9 @@ def get_icafbirn(seed):
 def generate_version_name(config):
     version = f'm{config["model"]}_' \
         f'd{config["dataset"]}_' \
-        f's{config["seed"]}_' \
-        f's{config["local_size"]}_' \
-        f'g{config["context_size"]}'
+        f'se{config["seed"]}_' \
+        f'ls{config["local_size"]}_' \
+        f'cs{config["context_size"]}'
     return version
 
 
@@ -90,7 +90,7 @@ def get_hyperparameters(config):
         # Essentially 'beta' for the context-only model
         "gamma": tune.loguniform(1e-6, 1e-5),
         "theta": tune.loguniform(1e-5, 1e-4) if config['model'] == 'CDSVAE' else tune.choice([0]),
-        "lambda": tune.loguniform(1e-3, 1e-2) if "CF" in config['model'] else tune.choice([0]),
+        "lambda": tune.loguniform(1e-2, 1e-1) if "CF" in config['model'] else tune.choice([0]),
         "dropout": tune.choice([0, 0.1, 0.2])}
     }
 

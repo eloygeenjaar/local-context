@@ -16,7 +16,7 @@ from sklearn.linear_model import LogisticRegression
 
 
 class BaseModel(pl.LightningModule):
-    def __init__(self, num_layers, spatial_hidden_size, temporal_hidden_size, lr, batch_size, beta, gamma, theta):
+    def __init__(self, config, hyperparameters, viz):
         super().__init__()
         self.local_size = config['local_size']
         self.context_size = config['context_size']
@@ -35,16 +35,11 @@ class BaseModel(pl.LightningModule):
         self.lr = hyperparameters['lr']
         self.seed = config['seed']
         # Loss function hyperparameters
-<<<<<<< HEAD
         self.beta = hyperparameters['beta']
         self.gamma = hyperparameters['gamma']
         self.theta = hyperparameters['theta']
-        self.lambda_ = hyperparameters['lambda']
-=======
-        self.beta = beta
-        self.gamma = gamma
-        self.theta = theta
->>>>>>> ray_classification
+        if 'lambda' in hyperparameters.keys():
+            self.lambda_ = hyperparameters['lambda']
         self.anneal = 0.0
         self.loss_keys = [
             'mse',
@@ -99,8 +94,8 @@ class BaseModel(pl.LightningModule):
             #cf_log_prob = output['local_dist'].log_prob(output['cf_local_z'])
             # Calculate likelihood:
             # p(z | x, z_c) / p(z* | x, z_c*)
-            cf_loss = -F.cosine_similarity(output['nf_local_z'],
-                                           output['cf_local_z'], dim=-1).mean(0)
+            cf_loss = 1-F.cosine_similarity(output['nf_local_z'],
+                                            output['cf_local_z'], dim=-1).mean(0)
         else:
             cf_loss = torch.zeros((1, ), device=x.device)
         
