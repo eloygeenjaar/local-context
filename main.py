@@ -25,8 +25,8 @@ from lib.utils import (
 if __name__ == "__main__":
     test = False
     viz = False  # Visualize during training
-    max_epochs = 750 if not test else 100
-    scheduler_epochs = 250 if not test else 50
+    max_epochs = 850 if not test else 100
+    scheduler_epochs = 150 if not test else 50
     torch.backends.cudnn.deterministic = True
     config = get_default_config(sys.argv)
     random.seed(config["seed"])
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     # Initialize the scheduler
     scheduler = ASHAScheduler(
         time_attr='training_iteration',
-        metric='va_elbo',
+        metric='va_loss',
         mode='min',
         max_t=scheduler_epochs,
         grace_period=50 if not test else 1,
@@ -84,7 +84,7 @@ if __name__ == "__main__":
 
     # Initialize the algorithm with which we select future hyperparameters
     # to run the model with
-    algo = OptunaSearch(metric="va_elbo", mode="min")
+    algo = OptunaSearch(metric="va_loss", mode="min")
 
     # A reporter that makes it easy to keep track of the status for each of
     # the models
@@ -132,7 +132,7 @@ if __name__ == "__main__":
 
     # Get the best result from the tuner
     best_result = result_grid.get_best_result( 
-        metric="va_elbo", mode="min")
+        metric="va_loss", mode="min")
     # Get the checkpoint at which this model is saved
     best_checkpoint = best_result.checkpoint
 
