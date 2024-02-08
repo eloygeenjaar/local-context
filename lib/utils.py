@@ -43,6 +43,7 @@ class DataModule(pl.LightningDataModule):
                           batch_size=self.config["batch_size"], shuffle=False,
                           persistent_workers=True, prefetch_factor=5, drop_last=False)
 
+
 def get_default_config(args):
     if len(args) > 1:
         with Path(f'configs/config_{int(args[1])}.yaml').open('r') as f:
@@ -51,6 +52,7 @@ def get_default_config(args):
         with Path('configs/default.yaml').open('r') as f:
             default_conf = yaml.safe_load(f)
     return dict(default_conf)
+
 
 def get_icafbirn(seed):
     df = pd.read_csv('/data/users1/egeenjaar/local-global/data/ica_fbirn/info_df.csv', index_col=0)
@@ -64,6 +66,7 @@ def get_icafbirn(seed):
     test_df = df.loc[test_index].copy()
     return train_df, valid_df, test_df
 
+
 def generate_version_name(config):
     version = f'm{config["model"]}_' \
         f'd{config["dataset"]}_' \
@@ -72,21 +75,23 @@ def generate_version_name(config):
         f'g{config["context_size"]}'
     return version
 
+
 def get_hyperparameters(config):
     return {"train_loop_config": {
         # Unused parameter for Context-only model
-        "num_layers": tune.choice([1, 2, 3, 4, 5, 6]) if not config['model'] == 'CO' else tune.choice([1]),
+        "num_layers": tune.choice([3, 4, 5, 6]) if not config['model'] == 'CO' else tune.choice([1]),
         "spatial_hidden_size": tune.choice([64, 128, 256]),
         # Unused parameter for Context-only model
         "temporal_hidden_size": tune.choice([128, 256, 512]) if not config['model'] == 'CO' else tune.choice([128]),
        "lr": tune.loguniform(1e-4, 2e-3),
         "batch_size": tune.choice([64, 128]),
         # Unused parameter for Context-only model
-        "beta": tune.loguniform(1e-4, 1e-1),
+        "beta": tune.loguniform(1e-5, 1e-4),
         # Essentially 'beta' for the context-only model
-        "gamma": tune.loguniform(1e-5, 1e-1),
-        "theta": tune.loguniform(1e-4, 1e-1) if config['model'] == 'CDSVAE' else tune.choice([0]),
-        "dropout": tune.choice([0, 0.05, 0.1, 0.25, 0.5])}
+        "gamma": tune.loguniform(1e-6, 1e-5),
+        "theta": tune.loguniform(1e-5, 1e-4) if config['model'] == 'CDSVAE' else tune.choice([0]),
+        "lambda": tune.loguniform(1e-3, 1e-2) if "CF" in config['model'] else tune.choice([0]),
+        "dropout": tune.choice([0, 0.1, 0.2])}
     }
 
 
@@ -136,6 +141,9 @@ def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
         x_p = x_p.to(device, non_blocking=True)
         with torch.no_grad():
             model_output = model(x, x_p)
+        upsampling = x.size(0) // model.window_size
+        if upsampling > 1:
+            x = x[(upsampling // 2)::upsampling]
         output_dict['input'][subj_ix, temp_ix] = x.permute(1, 0, 2)
         output_dict['reconstruction'][subj_ix, temp_ix] = model_output['x_hat'].permute(1, 0, 2)
         output_dict['local_mean'][subj_ix, temp_ix] = model_output['local_dist'].mean.permute(1, 0, 2)

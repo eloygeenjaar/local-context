@@ -17,10 +17,10 @@ visualizations_possible = [
     'reconstruction_fnc', 'space_inputs',
     'jonker_volgenant'
 ]
-visualizations = ['jonker_volgenant']
+visualizations = ['context_space']
 
 config = get_default_config([''])
-config['model'] = 'CDSVAE'
+config['model'] = 'CFDSVAE'
 config['local_size'] = 2
 config['context_size'] = 2
 config['seed'] = 42
