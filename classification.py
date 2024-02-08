@@ -8,10 +8,10 @@ from sklearn.preprocessing import StandardScaler
 
 
 config = get_default_config([''])
-seeds = [42, 1337, 9999, 1212]
-models = ['DSVAE']
-local_sizes = [2, 4]
-context_sizes = [2, 4, 8, 16]
+seeds = [42, 1337]
+models = ['CDSVAE', 'CO', 'DSVAE', 'IDSVAE', 'LVAE']
+local_sizes = [0, 2]
+context_sizes = [0, 2]
 config = config.copy()
 for seed in seeds:
     np.random.seed(config["seed"])
@@ -32,6 +32,7 @@ for seed in seeds:
                     'cuda' if torch.cuda.is_available() else 'cpu')
                 model_module = importlib.import_module('lib.model')
                 model_type = getattr(model_module, config['model'])
+                
                 model = model_type.load_from_checkpoint(
                     f'lightning_logs/{version}/checkpoints/best.ckpt')
                 model = model.to(device)

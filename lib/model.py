@@ -11,7 +11,7 @@ from torch.nn import functional as F
 from sklearn.decomposition import PCA
 from .modules import (
     TemporalEncoder, LocalEncoder, LocalDecoder,
-    ConvContextEncoder, ConvContextDecoder, FastTemporalEncoder)
+    ConvContextEncoder, ConvContextDecoder)
 from sklearn.linear_model import LogisticRegression
 
 
@@ -38,12 +38,14 @@ class BaseModel(pl.LightningModule):
         self.beta = hyperparameters['beta']
         self.gamma = hyperparameters['gamma']
         self.theta = hyperparameters['theta']
+        if 'lambda' in hyperparameters.keys():
+            self.lambda_ = hyperparameters['lambda']
         self.anneal = 0.0
-        self.viz = viz
         self.loss_keys = [
             'mse',
             'kl_l',
             'kl_c',
+            'cont',
             'cf',
             'elbo'
         ]
@@ -56,6 +58,9 @@ class BaseModel(pl.LightningModule):
     def elbo(self, x, x_p):
         # Output is a dictionary
         output = self.forward(x, x_p)
+        upsampling = x.size(0) // self.window_size
+        if upsampling > 1:
+            x = x[(upsampling // 2)::upsampling]
         # Calculate reconstruction loss
         mse = -D.Normal(output['x_hat'], 0.1).log_prob(x).mean(dim=(0, 2))
         # Calculate the kl-divergence for the local representations
@@ -76,12 +81,24 @@ class BaseModel(pl.LightningModule):
             # but we can also try to contrast contexts only along a certain
             # dimension to 'disentangle' similar and dissimilar dimensions
             # in the context space.
-            cf_loss = self.cf_loss(
+            cont_loss = self.cf_loss(
                 output['context_dist'].mean[..., :self.contrastive_dim],
                 output['context_dist_p'].mean[..., :self.contrastive_dim],
                 output['context_dist_n'].mean[..., :self.contrastive_dim])
         else:
+            cont_loss = torch.zeros((1, ), device=x.device)
+        # Calculate the counterfactual loss (in case we are training
+        # a counterfactual model)
+        if output['cf_local_z'] is not None:
+            #log_prob = output['local_dist'].log_prob(output['local_z'])
+            #cf_log_prob = output['local_dist'].log_prob(output['cf_local_z'])
+            # Calculate likelihood:
+            # p(z | x, z_c) / p(z* | x, z_c*)
+            cf_loss = 1-F.cosine_similarity(output['nf_local_z'],
+                                            output['cf_local_z'], dim=-1).mean(0)
+        else:
             cf_loss = torch.zeros((1, ), device=x.device)
+        
         elbo = (mse + self.anneal * (
                 self.beta * kl_l +
                 self.gamma * kl_c
@@ -89,11 +106,14 @@ class BaseModel(pl.LightningModule):
         # This is to make sure the scheduler optimizes theta
         # based on the elbo, not based on the cf_loss as well
         # since it will trivially lead to a very low theta.
-        loss = (elbo + self.anneal * self.theta * cf_loss).mean()
+        loss = (elbo + 
+                self.anneal * self.theta * cont_loss +
+                self.anneal * self.lambda_ * cf_loss).mean()
         return loss, {
             'mse': mse.detach().mean(),
             'kl_l': kl_l.detach().mean(),
             'kl_c': kl_c.detach().mean(),
+            'cont': cont_loss.detach().mean(),
             'cf': cf_loss.detach().mean(),
             'elbo': elbo.detach().mean()
             }, (output['local_dist'].mean.detach(),
@@ -190,6 +210,17 @@ class DSVAE(BaseModel):
 
     def forward(self, x, x_p):
         context_dist, local_dist, prior_dist, z = self.temporal_encoder(x)
+        upsampling = x.size(0) // self.window_size
+        if upsampling > 1:
+            z = z[(upsampling // 2)::upsampling]
+            local_dist = D.Normal(
+                local_dist.mean[(upsampling // 2)::upsampling],
+                local_dist.stddev[(upsampling // 2)::upsampling]
+            )
+            prior_dist = D.Normal(
+                prior_dist.mean[(upsampling // 2)::upsampling],
+                prior_dist.stddev[(upsampling // 2)::upsampling]
+            )
         x_hat = self.spatial_decoder(z)
         return {
             'context_dist': context_dist,
@@ -215,8 +246,76 @@ class DSVAE(BaseModel):
         # Context: (2, batch_size, context_size)
         # Local: (num_timesteps, 2, batch_size, local_size)
         # The 2 dimensions are: 0: non-cf, 1: cf
-        context, local = self.temporal_encoder.generate_counterfactual(x, cf_context)
-        
+        local, z = self.temporal_encoder.generate_counterfactual(x, cf_context)
+        x_hat = self.spatial_decoder(z)
+        return local, x_hat
+
+
+class CFDSVAE(BaseModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.temporal_encoder = TemporalEncoder(
+            self.input_size, self.local_size, self.context_size,
+            hidden_size=self.temporal_hidden_size, dropout_val=self.dropout)
+
+    def forward(self, x, x_p):
+        context_dist, local_dist, prior_dist, z = self.temporal_encoder(x)
+        # Concatenated as follows: (local_z, context_z)
+        # Global z is the repeated across the timestep dimension so
+        # we just select the first
+        global_z = z[0, ..., self.local_size:]
+        #context_distances = torch.cdist(global_z, global_z)
+        #ix = torch.argmax(context_distances, dim=1)
+        # Generate counterfactual local representations based on
+        # the furthest context window.
+        ix = torch.randperm(x.size(1))
+        cf_local_dist, _ = self.temporal_encoder.generate_counterfactual(
+            x, global_z[ix])
+        cf_local_z = cf_local_dist.rsample()
+        nf_local_z = z[..., :self.local_size].clone()
+        upsampling = x.size(0) // self.window_size
+        if upsampling > 1:
+            z = z[(upsampling // 2)::upsampling]
+            local_dist = D.Normal(
+                local_dist.mean[(upsampling // 2)::upsampling],
+                local_dist.stddev[(upsampling // 2)::upsampling]
+            )
+            prior_dist = D.Normal(
+                prior_dist.mean[(upsampling // 2)::upsampling],
+                prior_dist.stddev[(upsampling // 2)::upsampling]
+            )
+        x_hat = self.spatial_decoder(z)
+        return {
+            'context_dist': context_dist,
+            'local_dist': local_dist,
+            'prior_dist': prior_dist,
+            'x_hat': x_hat,
+            # Concatenated as follows: (local_z, context_z)
+            'nf_local_z': nf_local_z,
+            'cf_local_z': cf_local_z,
+            # This is only used for contrastive models
+            'context_dist_n': None
+        }
+
+    def embed_context(self, x):
+        return self.temporal_encoder.get_context(x)[0]
+
+    def generate_counterfactual(self, x, cf_context):
+        # The input to this function should essentiall look like this:
+        # x: (num_timesteps, batch_size, data_size)
+        # cf_context: (batch_size, context_size)
+        # Each subject in the batch should be a subject we want to 
+        # generate a counterfactual for, where
+        # each entry in the cf_context batch should correspond
+        # to the counterfactual context we should use for the 
+        # corresponding subject in x.
+        # Context: (2, batch_size, context_size)
+        # Local: (num_timesteps, 2, batch_size, local_size)
+        # The 2 dimensions are: 0: non-cf, 1: cf
+        local, z = self.temporal_encoder.generate_counterfactual(x, cf_context)
+        x_hat = self.spatial_decoder(z)
+        return local, x_hat
+
 
 class LVAE(BaseModel):
     # Local VAE (only has a local encoder, not a local and context encoder)
@@ -251,6 +350,17 @@ class CDSVAE(BaseModel):
 
     def forward(self, x, x_p):
         context_dist, local_dist, prior_dist, z = self.temporal_encoder(x)
+        upsampling = x.size(0) // self.window_size
+        if upsampling > 1:
+            z = z[(upsampling // 2)::upsampling]
+            local_dist = D.Normal(
+                local_dist.mean[(upsampling // 2)::upsampling],
+                local_dist.stddev[(upsampling // 2)::upsampling]
+            )
+            prior_dist = D.Normal(
+                prior_dist.mean[(upsampling // 2)::upsampling],
+                prior_dist.stddev[(upsampling // 2)::upsampling]
+            )
         # Create negative example
         # (another window in the batch, which is randomized)
         x_n = x[:, torch.randperm(x.size(1))]
@@ -309,6 +419,11 @@ class CIDSVAE(CDSVAE):
 
 class CO(BaseModel):
     def __init__(self, *args, **kwargs):
+        print(args)
+        print(kwargs)
+        #()
+        # {'num_layers': 1, 'spatial_hidden_size': 128, 'temporal_hidden_size': 128, 'lr': 0.0010872422452394674, 'batch_size': 128, 'beta': 0, 'gamma': 0.000291063591313307, 'theta': 0}
+
         super().__init__(*args, **kwargs)
         self.temporal_encoder = ConvContextEncoder(
             self.input_size, self.spatial_hidden_size, self.context_size,

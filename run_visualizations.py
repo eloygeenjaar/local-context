@@ -17,13 +17,14 @@ visualizations_possible = [
     'reconstruction_fnc', 'space_inputs',
     'jonker_volgenant'
 ]
-visualizations = ['jonker_volgenant']
+visualizations = ['context_space']
 
 config = get_default_config([''])
-config['model'] = 'CDSVAE'
+config['model'] = 'CFDSVAE'
 config['local_size'] = 2
 config['context_size'] = 2
 config['seed'] = 42
+config['dataset'] = 'UpsampledICAfBIRN'
 version = generate_version_name(config)
 result_p = Path(f'ray_results/{version}')
 ckpt_p = result_p / 'final.ckpt'
