@@ -16,7 +16,7 @@ from sklearn.linear_model import LogisticRegression
 
 
 class BaseModel(pl.LightningModule):
-    def __init__(self, config, hyperparameters, viz):
+    def __init__(self, num_layers, spatial_hidden_size, temporal_hidden_size, lr, batch_size, beta, gamma, theta):
         super().__init__()
         self.local_size = config['local_size']
         self.context_size = config['context_size']
@@ -35,12 +35,17 @@ class BaseModel(pl.LightningModule):
         self.lr = hyperparameters['lr']
         self.seed = config['seed']
         # Loss function hyperparameters
+<<<<<<< HEAD
         self.beta = hyperparameters['beta']
         self.gamma = hyperparameters['gamma']
         self.theta = hyperparameters['theta']
         self.lambda_ = hyperparameters['lambda']
+=======
+        self.beta = beta
+        self.gamma = gamma
+        self.theta = theta
+>>>>>>> ray_classification
         self.anneal = 0.0
-        self.viz = viz
         self.loss_keys = [
             'mse',
             'kl_l',
@@ -419,6 +424,11 @@ class CIDSVAE(CDSVAE):
 
 class CO(BaseModel):
     def __init__(self, *args, **kwargs):
+        print(args)
+        print(kwargs)
+        #()
+        # {'num_layers': 1, 'spatial_hidden_size': 128, 'temporal_hidden_size': 128, 'lr': 0.0010872422452394674, 'batch_size': 128, 'beta': 0, 'gamma': 0.000291063591313307, 'theta': 0}
+
         super().__init__(*args, **kwargs)
         self.temporal_encoder = ConvContextEncoder(
             self.input_size, self.spatial_hidden_size, self.context_size,
