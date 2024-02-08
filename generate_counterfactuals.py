@@ -13,10 +13,11 @@ from sklearn.metrics import pairwise_distances_argmin_min
 
 
 config = get_default_config([''])
-config['model'] = 'CDSVAE'
+config['model'] = 'CFDSVAE'
 config['local_size'] = 2
 config['context_size'] = 2
-config['seed'] = 1010
+config['seed'] = 42
+config['dataset'] = 'ICAfBIRN'
 version = generate_version_name(config)
 result_p = Path(f'ray_results/{version}')
 ckpt_p = result_p / 'final.ckpt'
@@ -61,41 +62,53 @@ if (labels == targets).sum() / (num_subjects * num_windows) < 0.5:
 closest, _ = pairwise_distances_argmin_min(km.cluster_centers_, context_embeddings)
 # Make sure the two windows closest to the cluster centers are from two different classes
 assert labels[closest].sum() == 1
+print(labels[closest])
 
 print(inputs.size())
 num_subjects, num_windows, num_timesteps, data_size = inputs.size()
 inputs = inputs.view(num_subjects * num_windows, num_timesteps, data_size)
-x = inputs[closest].permute(1, 0, 2).to(model.device)
 flipped_closest = closest[::-1].copy()
-cf_context = context_embeddings[flipped_closest].to(model.device)
-print(cf_context)
+
+x = torch.cat((inputs[closest], inputs[closest]), dim=0).permute(1, 0, 2).to(model.device)
+cf_context = torch.cat((context_embeddings[closest], context_embeddings[flipped_closest]), dim=0).to(model.device)
+
 model.eval()
 with torch.no_grad():
-    local, x_hat = model.generate_counterfactual(x, cf_context)
-local = local.cpu()
+    local, x_hat = model.generate_counterfactual(
+        x, cf_context)
+
+local = local.mean.cpu()
 x_hat = x_hat.cpu()
+
+print(torch.cdist(torch.reshape(local.permute(1, 0, 2), (4, num_timesteps * model.local_size)),
+                  torch.reshape(local.permute(1, 0, 2), (4, num_timesteps * model.local_size))))
+
 # Shape:
 # Local: (num_timesteps, 2, batch_size, local_size)
 # X_hat: (num_timesteps, 2, batch_size, data_size)
-num_timesteps, _, batch_size, _ = local.size()
-fig, axs = plt.subplots(batch_size, 2)
-for i in range(batch_size):
+local = local.view(num_timesteps, 2, 2, model.local_size)
+x_hat = x_hat.view(num_timesteps, 2, 2, data_size)
+
+fig, axs = plt.subplots(2, 3)
+for i in range(2):
     minmax = x_hat[:, :, i].abs().max()
     axs[i, 0].imshow(x_hat[:, 0, i].T, vmin=-minmax, vmax=minmax, cmap='jet')
     axs[i, 1].imshow(x_hat[:, 1, i].T, vmin=-minmax, vmax=minmax, cmap='jet')
+    axs[i, 2].imshow((x_hat[:, 0, i] - x_hat[:, 1, i]).T, cmap='jet')
 axs[0, 0].set_title('Original')
 axs[0, 1].set_title('Counterfactual')
-plt.savefig('results/counterfactual_rec.png', dpi=400, bbox_inches="tight")
+axs[0, 2].set_title('Difference')
+plt.savefig('results/CFDSVAE_2_counterfactual_rec.png', dpi=400, bbox_inches="tight")
 plt.clf()
 plt.close(fig)
 
-fig, axs = plt.subplots(batch_size, 2)
-for i in range(batch_size):
+fig, axs = plt.subplots(2, 2)
+for i in range(2):
     minmax = local[:, :, i].abs().max()
     axs[i, 0].plot(local[:, 0, i, 0], local[:, 0, i, 1], c='red' if labels[closest][i] else 'blue')
     axs[i, 1].plot(local[:, 1, i, 0], local[:, 1, i, 1], c='red' if labels[closest][i] else 'blue')
 axs[0, 0].set_title('Original')
 axs[0, 1].set_title('Counterfactual')
-plt.savefig('results/counterfactual_local.png', dpi=400, bbox_inches="tight")
+plt.savefig('results/CFDSVAE_2_counterfactual_local.png', dpi=400, bbox_inches="tight")
 plt.clf()
 plt.close(fig)
