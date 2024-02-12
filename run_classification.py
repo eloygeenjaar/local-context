@@ -101,10 +101,6 @@ for run in runs:
         results_dic_score[version_no_seed].append(scores)
         results_dic_mse[version_no_seed].append(val_mse)
 
-print(results_dic_score)
-for key in results_dic_mse.keys():
-    averages = np.average(results_dic_score[key], axis = 0)
-    print(averages)
 with open('classification.csv', 'w') as csvfile:
     csvwriter = csv.writer(csvfile)
     csvwriter.writerow(["Model", "ACC_Linear", "ACC_RBF", "MSE"])
