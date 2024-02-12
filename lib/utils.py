@@ -112,14 +112,9 @@ def init_data_module(config, shuffle_train=False) -> DataModule:
 def init_model(config, hyperparameters, viz, ckpt_path=None) -> pl.LightningModule:   
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
-    print(config)
-    print(hyperparameters)
     model = model_type(config, hyperparameters, viz)
-    # if ckpt_path is not None:
-    #     model.load_state_dict(torch.load(ckpt_path), strict=False)
     if ckpt_path is not None:
         model.load_state_dict(torch.load(ckpt_path)['state_dict'])
-
     return model
 
 
@@ -127,16 +122,6 @@ def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
     num_subjects = dataloader.dataset.num_subjects
     num_windows = dataloader.dataset.num_windows
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    if config['data_size'] == 0:
-        config['data_size'] = 53
-    if config['local_size'] == 0:
-        config['local_size'] = 53
-    if config['context_size'] == 0:
-        config['context_size'] = 2
-    if config['window_size'] == 0:
-        config['window_size'] = 20
-
-
     output_dict = {
         'input': torch.empty((num_subjects, num_windows, config['window_size'], config['data_size']), device=device),
         'reconstruction': torch.empty((num_subjects, num_windows, config['window_size'], config['data_size']), device=device),
