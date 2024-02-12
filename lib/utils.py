@@ -43,6 +43,7 @@ class DataModule(pl.LightningDataModule):
                           batch_size=self.config["batch_size"], shuffle=False,
                           persistent_workers=True, prefetch_factor=5, drop_last=False)
 
+
 def get_default_config(args):
     if len(args) > 1:
         with Path(f'configs/config_{int(args[1])}.yaml').open('r') as f:
@@ -51,6 +52,7 @@ def get_default_config(args):
         with Path('configs/default.yaml').open('r') as f:
             default_conf = yaml.safe_load(f)
     return dict(default_conf)
+
 
 def get_icafbirn(seed):
     df = pd.read_csv('/data/users1/egeenjaar/local-global/data/ica_fbirn/info_df.csv', index_col=0)
@@ -64,54 +66,32 @@ def get_icafbirn(seed):
     test_df = df.loc[test_index].copy()
     return train_df, valid_df, test_df
 
+
 def generate_version_name(config):
     version = f'm{config["model"]}_' \
         f'd{config["dataset"]}_' \
-        f's{config["seed"]}_' \
-        f's{config["local_size"]}_' \
-        f'g{config["context_size"]}'
-    return version
-
-def generate_version_name_dic(config):
-    version = f'm{config["model"]}_' \
-        f'd{config["dataset"]}_' \
-        f's{config["local_size"]}_' \
-        f'g{config["context_size"]}'
+        f'se{config["seed"]}_' \
+        f'ls{config["local_size"]}_' \
+        f'cs{config["context_size"]}'
     return version
 
 
 def get_hyperparameters(config):
     return {"train_loop_config": {
         # Unused parameter for Context-only model
-        "num_layers": tune.choice([1, 2, 3, 4, 5]) if not config['model'] == 'CO' else tune.choice([1]),
+        "num_layers": tune.choice([3, 4, 5, 6]) if not config['model'] == 'CO' else tune.choice([1]),
         "spatial_hidden_size": tune.choice([64, 128, 256]),
         # Unused parameter for Context-only model
         "temporal_hidden_size": tune.choice([128, 256, 512]) if not config['model'] == 'CO' else tune.choice([128]),
        "lr": tune.loguniform(1e-4, 2e-3),
         "batch_size": tune.choice([64, 128]),
         # Unused parameter for Context-only model
-       "beta": tune.loguniform(5e-5, 1e-3),
+        "beta": tune.loguniform(1e-5, 1e-4),
         # Essentially 'beta' for the context-only model
-        "gamma": tune.loguniform(1e-6, 1e-3),
-        "theta": tune.loguniform(1e-4, 1e-2) if config['model'] == 'CDSVAE' else tune.choice([0]),
-        "dropout": tune.choice([0, 0.05, 0.1, 0.25, 0.5])}
-    }
-
-def get_hyperparameters_2(config):
-    return {
-        # Unused parameter for Context-only model
-        "num_layers": 1,
-        "spatial_hidden_size": 64,
-        # Unused parameter for Context-only model
-        "temporal_hidden_size": 128,
-       "lr": 1e-4,
-        "batch_size": 64,
-        # Unused parameter for Context-only model
-       "beta": 5e-5,
-        # Essentially 'beta' for the context-only model
-        "gamma": 1e-6,
-        "theta": 1e-4,
-        "dropout": 0.1
+        "gamma": tune.loguniform(1e-6, 1e-5),
+        "theta": tune.loguniform(1e-5, 1e-4) if config['model'] == 'CDSVAE' else tune.choice([0]),
+        "lambda": tune.loguniform(1e-2, 1e-1) if "CF" in config['model'] else tune.choice([0]),
+        "dropout": tune.choice([0, 0.1, 0.2])}
     }
 
 
@@ -120,13 +100,15 @@ def load_hyperparameters(p: Path):
         hyperparameters = json.load(f)
     return hyperparameters['train_loop_config']
 
+
 def init_data_module(config, shuffle_train=False) -> DataModule:
     data_module = importlib.import_module('lib.data')
     dataset_type = getattr(data_module, config['dataset'])
     dm = DataModule(config, dataset_type, shuffle_train=shuffle_train)
     dm.setup()
     return dm
-    
+
+
 def init_model(config, hyperparameters, viz, ckpt_path=None) -> pl.LightningModule:   
     model_module = importlib.import_module('lib.model')
     model_type = getattr(model_module, config['model'])
@@ -139,6 +121,7 @@ def init_model(config, hyperparameters, viz, ckpt_path=None) -> pl.LightningModu
         model.load_state_dict(torch.load(ckpt_path)['state_dict'])
 
     return model
+
 
 def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
     num_subjects = dataloader.dataset.num_subjects
@@ -173,6 +156,9 @@ def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
         x_p = x_p.to(device, non_blocking=True)
         with torch.no_grad():
             model_output = model(x, x_p)
+        upsampling = x.size(0) // model.window_size
+        if upsampling > 1:
+            x = x[(upsampling // 2)::upsampling]
         output_dict['input'][subj_ix, temp_ix] = x.permute(1, 0, 2)
         output_dict['reconstruction'][subj_ix, temp_ix] = model_output['x_hat'].permute(1, 0, 2)
         output_dict['local_mean'][subj_ix, temp_ix] = model_output['local_dist'].mean.permute(1, 0, 2)
@@ -184,12 +170,14 @@ def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
         output_dict[key] = output_dict[key].cpu()
     return output_dict
 
+
 def embed_all(config, model, data_module) -> Dict[str, Dict[str, torch.Tensor]]:
     return {
         'train': embed_dataloader(config, model, data_module.train_dataloader()),
         'valid': embed_dataloader(config, model, data_module.val_dataloader()),
         'test': embed_dataloader(config, model, data_module.test_dataloader())
     }
+
 
 def normal_sampling(rng, current_ix: int, length: int, sd: float):
     sample = int(np.round(rng.normal(0, sd), 0))

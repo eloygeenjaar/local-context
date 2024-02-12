@@ -55,7 +55,8 @@ class LocalEncoder(nn.Module):
 
 
 class TemporalEncoder(nn.Module):
-    def __init__(self, input_size, local_size, context_size, dropout_val, hidden_size=256,
+    def __init__(self, input_size, local_size,
+                 context_size, dropout_val, hidden_size=256,
                  independence=False):
         super().__init__()
         self.input_size = input_size
@@ -106,6 +107,30 @@ class TemporalEncoder(nn.Module):
         z = torch.cat((local_z, context_z), dim=-1)
         return context_dist, local_dist, prior_dist, z
 
+    def generate_counterfactual(self, x, cf_context):
+        # The input to this function should essentiall look like this:
+        # x: (num_timesteps, batch_size, data_size)
+        # cf_context: (batch_size, context_size)
+        # Each subject in the batch should be a subject we want to 
+        # generate a counterfactual for, where
+        # each entry in the cf_context batch should correspond
+        # to the counterfactual context we should use for the 
+        # corresponding subject in x.
+        num_timesteps, batch_size, _ = x.size()
+        context_z = cf_context.unsqueeze(0).repeat(num_timesteps, 1, 1)
+        # Repeat along batch so we generate both non-cf and cf
+        # The first batch_size subjects are non-cf
+        # and the second batch_size entries are cfs
+        if self.independence:
+            context_input = x
+        else:
+            context_input = torch.cat((x, context_z), dim=-1)
+        h_prior = torch.zeros((1, batch_size, self.hidden_size),
+                              device=x.device)
+        local_dist, prior_dist = self.local_encoder(context_input, h_prior)
+        z = torch.cat((local_dist.mean, context_z), dim=-1)
+        return local_dist, z
+
 
 class LocalDecoder(nn.Module):
     def __init__(self, input_size: int, hidden_size: int,
@@ -116,6 +141,7 @@ class LocalDecoder(nn.Module):
         self.output_size = output_size
         self.num_layers = num_layers
         self.layers = nn.ModuleList()
+        self.act = nn.ELU
         # Just a linear layer
         if self.num_layers == 1:
             self.layers.append(
@@ -125,13 +151,13 @@ class LocalDecoder(nn.Module):
         else:
             self.layers.extend([
                 nn.Linear(input_size, hidden_size),
-                nn.ELU(),
+                self.act(),
                 nn.Dropout(dropout_val)]
             )
             for _ in range(self. num_layers - 2):
                 self.layers.extend([
                     nn.Linear(hidden_size, hidden_size),
-                    nn.ELU(),
+                    self.act(),
                     nn.Dropout(dropout_val)]
                 )
             self.layers.append(

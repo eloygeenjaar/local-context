@@ -1,5 +1,5 @@
 dataset: ICAfBIRN
-model: CDSVAE
+model: CFDSVAE
 
 local_size: 2
 context_size: 2

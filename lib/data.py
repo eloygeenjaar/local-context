@@ -5,7 +5,7 @@ from nilearn import signal
 from lib.definitions import comp_ix
 from torch.utils.data import Dataset, DataLoader
 from lib.utils import get_icafbirn, normal_sampling
-
+from scipy.interpolate import CubicSpline
 
 
 class ICAfBIRN(Dataset):
@@ -61,7 +61,8 @@ class ICAfBIRN(Dataset):
         x = self.data[subj_ix]
         x = x.float()
         # Obtain the subject's diagnosis
-        y = self.df.loc[self.indices[subj_ix], 'sz'] == 2
+        # True is schizophrenia
+        y = self.df.loc[self.indices[subj_ix], 'sz'] == 1
         # Obtain the temporal index
         temp_ix = ix % self.num_windows
         # Generate positive self-supervised samples
@@ -81,6 +82,55 @@ class ICAfBIRN(Dataset):
             (subj_ix, temp_ix),
             y)
 
+
+class UpsampledICAfBIRN(ICAfBIRN):
+    def __init__(self, data_type: str, seed: int,
+                 window_size: int, window_step: int):
+        super().__init__(data_type, seed, window_size, window_step)
+        self.TR = 2.0
+        original_timesteps = np.arange(
+            0, self.num_timesteps * self.TR, self.TR)
+        self.upsampling_factor = 4
+        timesteps_ups = np.arange(
+            - self.TR / 2, self.num_timesteps * self.TR - (self.TR / 2),
+            self.TR / self.upsampling_factor)
+        data_ups = []
+        for subj_i in range(self.data.size(0)):
+            comp_ups = []
+            for comp_i in range(self.data.size(-1)):
+                spl = CubicSpline(
+                    original_timesteps, self.data[subj_i, :, comp_i])
+                comp_ups.append(spl(timesteps_ups))
+            data_ups.append(np.stack(comp_ups, axis=-1))
+        self.data = torch.from_numpy(np.stack(data_ups, axis=0))
+
+    def __getitem__(self, ix):
+        # Obtain the subject index
+        subj_ix = ix // self.num_windows
+        # Select the data for the subject
+        x = self.data[subj_ix]
+        x = x.float()
+        # Obtain the subject's diagnosis
+        # True is schizophrenia
+        y = self.df.loc[self.indices[subj_ix], 'sz'] == 1
+        # Obtain the temporal index
+        temp_ix = ix % self.num_windows
+        # Generate positive self-supervised samples
+        pos_ix = normal_sampling(
+            self.rng, current_ix=temp_ix, length=self.num_windows,
+            sd=2.0)
+        pos_ix = temp_ix
+        start_window = (temp_ix * self.window_step) * self.upsampling_factor
+        end_window = start_window + self.window_size * self.upsampling_factor
+        # The positive self-supervised sample window
+        # (positive samples are defined as windows close to this window)
+        start_window_pos = pos_ix * self.window_step * self.upsampling_factor
+        end_window_pos = start_window_pos + self.window_size * self.upsampling_factor
+        return (
+            x[start_window:end_window],
+            x[start_window_pos:end_window_pos],
+            (subj_ix, temp_ix),
+            y)
 
 class Simulation(Dataset):
     def __init__(self, data_type: str, seed: int,
