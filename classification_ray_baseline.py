@@ -65,13 +65,22 @@ va_y = va_y.flatten()
 ssc = StandardScaler()
 tr_ge = ssc.fit_transform(tr_ge)
 va_ge = ssc.transform(va_ge)
-svm = SVC(kernel='linear')
-svm.fit(tr_ge, tr_y)
-score = svm.score(va_ge, va_y)
-print("Baseline (original input): " , score)
 
+kernels = ['linear', 'rbf']
+scores = []
+
+for kernel in kernels:
+    svm = SVC(kernel=kernel)
+    svm.fit(tr_ge, tr_y)
+    score = svm.score(va_ge, va_y)
+    print(config['dataset'], config['model'], config['context_size'], 
+            kernel, score)
+    scores.append(score)
+    del svm
+
+print("Baseline (original input): " , scores)
 
 with open('classification.csv', 'a') as csvfile:
     csvwriter = csv.writer(csvfile)
-    row = ["Baseline (original input)", "Linear", str(score), "NA"]
+    row = ["Baseline (original input)", str(scores[0]), str(scores[1]), "NA"]
     csvwriter.writerow(row)

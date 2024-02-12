@@ -93,13 +93,22 @@ va_y = va_y.flatten()
 ssc = StandardScaler()
 fncs_pca = ssc.fit_transform(fncs_pca)
 fncs_val_pca = ssc.transform(fncs_val_pca)
-svm = SVC(kernel='linear')
-svm.fit(fncs_pca, tr_y)
-score = svm.score(fncs_val_pca, va_y)
-print("Baseline (wFNC): " , score)
+kernels = ['linear', 'rbf']
+scores = []
+for kernel in kernels:
+    svm = SVC(kernel=kernel)
+    svm.fit(fncs_pca, tr_y)
+    score = svm.score(fncs_val_pca, va_y)
+    print(config['dataset'], config['model'], config['context_size'], 
+            kernel, score)
+    scores.append(score)
+    del svm
+
+
+print("Baseline (wFNC): " , scores)
 
 
 with open('classification.csv', 'a') as csvfile:
     csvwriter = csv.writer(csvfile)
-    row = ["Baseline (wFNC)", "Linear", str(score), "NA"]
+    row = ["Baseline (wFNC)", str(scores[0]), str(scores[1]), "NA"]
     csvwriter.writerow(row)
