@@ -14,11 +14,6 @@ from glob import glob
 
 config = get_default_config([''])
 kernels = ['linear', 'rbf']
-datasets = ['UpsampledICAfBIRN', 'ICAfBIRN']
-seeds = [42, 1337]
-models = ['CFDSVAE', 'DSVAE']
-local_sizes = [2]
-context_sizes = [2]
 config = config.copy()
 
 results_dic_score = {}
@@ -31,9 +26,9 @@ for run in runs:
     config_list = run.split("_")
     config['model'] = config_list[0][1:]
     config['dataset'] = config_list[1][1:]
-    config['seed'] = int(config_list[2][1:])
-    config['local_size'] = int(config_list[3][1:])
-    config['context_size'] = int(config_list[4][1:])
+    config['seed'] = int(config_list[2][2:])
+    config['local_size'] = int(config_list[3][2:])
+    config['context_size'] = int(config_list[4][2:])
     version = generate_version_name(config)
     result_p = Path(f'ray_results/{version}')
     ckpt_p = result_p / 'final.ckpt'
@@ -98,18 +93,22 @@ for run in runs:
         scores.append(score)
         del svm
 
-    version_no_seed = re.sub('_s\d+', '', version, count = 1)
-    if version not in results_dic_score:
+    version_no_seed = re.sub('_se\d+', '', version, count = 1)
+    if version_no_seed not in results_dic_score:
         results_dic_score[version_no_seed] = [scores]
         results_dic_mse[version_no_seed] = [val_mse]
     else:
         results_dic_score[version_no_seed].append(scores)
         results_dic_mse[version_no_seed].append(val_mse)
 
-with open('classification.csv', 'a') as csvfile:
+print(results_dic_score)
+for key in results_dic_mse.keys():
+    averages = np.average(results_dic_score[key], axis = 0)
+    print(averages)
+with open('classification.csv', 'w') as csvfile:
     csvwriter = csv.writer(csvfile)
     csvwriter.writerow(["Model", "ACC_Linear", "ACC_RBF", "MSE"])
-
+    print("writing?)")
     for key in results_dic_mse.keys():
         averages = np.average(results_dic_score[key], axis = 0)
         mse = np.average(results_dic_mse[key])
