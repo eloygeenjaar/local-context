@@ -10,7 +10,6 @@ import os
 from lib.visualizations import visualize_space
 import csv
 import json
-from glob import glob
 
 
 config = get_default_config([''])
@@ -22,12 +21,6 @@ config = config.copy()
 
 results_dic_score = {}
 results_dic_mse = {}
-
-runs = glob('ray_results/*')
-
-for run in runs:
-    
-
 
 for seed in seeds:
     np.random.seed(config["seed"])
