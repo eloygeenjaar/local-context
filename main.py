@@ -71,7 +71,7 @@ if __name__ == "__main__":
     # Initialize the scheduler
     scheduler = ASHAScheduler(
         time_attr='training_iteration',
-        metric='va_loss',
+        metric='va_mse',
         mode='min',
         max_t=scheduler_epochs,
         grace_period=50 if not test else 1,
@@ -84,7 +84,7 @@ if __name__ == "__main__":
 
     # Initialize the algorithm with which we select future hyperparameters
     # to run the model with
-    algo = OptunaSearch(metric="va_loss", mode="min")
+    algo = OptunaSearch(hyperparameters, metric="va_mse", mode="min")
 
     # A reporter that makes it easy to keep track of the status for each of
     # the models
@@ -105,11 +105,11 @@ if __name__ == "__main__":
             # training_iteration, whichever comes first
             stop={"training_iteration": scheduler_epochs},
             checkpoint_config=CheckpointConfig(num_to_keep=1,
-                checkpoint_score_attribute="va_loss",
+                checkpoint_score_attribute="va_mse",
                 checkpoint_score_order="min"
             ),
             progress_reporter=reporter,
-            failure_config=FailureConfig(max_failures=2)
+            failure_config=FailureConfig(max_failures=4)
        ))
     # The tuner will try to find the best hyperparameter configuration
     # using the search algorithm and the scheduler, which decides
@@ -122,8 +122,8 @@ if __name__ == "__main__":
             num_samples=100 if not test else 2,
             search_alg=algo,
             scheduler=scheduler
-        ),
-        param_space=hyperparameters
+        )
+        #param_space=hyperparameters
     )
     result_grid = tuner.fit()
 
@@ -132,9 +132,9 @@ if __name__ == "__main__":
 
     # Get the best result from the tuner
     best_result = result_grid.get_best_result( 
-        metric="va_loss", mode="min")
+        metric="va_mse", mode="min")
     # Get the checkpoint at which this model is saved
-    best_checkpoint = best_result.checkpoint
+    best_checkpoint = best_result.best_checkpoints[0][0]
 
     # Get the hyperparameters of the model
     params_p = Path(best_checkpoint.path).parent / 'params.json'
@@ -143,8 +143,9 @@ if __name__ == "__main__":
     # Delete all the worse models' checkpoints to save disk space
     for result in result_grid:
         if not result == best_result:
-            checkpoint = Path(result.checkpoint.path) / 'checkpoint.ckpt'
-            checkpoint.unlink()
+            for checkpoint in result.best_checkpoints:
+                if Path(checkpoint[0].path).is_file():
+                    Path(checkpoint[0].path).unlink()
 
     # Initialize another trainer instance to finish training the best
     # model
@@ -160,7 +161,7 @@ if __name__ == "__main__":
             # training_iteration, whichever comes first
             stop={"training_iteration": max_epochs},
             checkpoint_config=CheckpointConfig(num_to_keep=1,
-                checkpoint_score_attribute="va_loss",
+                checkpoint_score_attribute="va_mse",
                 checkpoint_score_order="min"),
             progress_reporter=reporter,
     ),

@@ -5,11 +5,12 @@ import importlib
 import numpy as np
 import pandas as pd
 import lightning.pytorch as pl
+from optuna import distributions as od
 from typing import Dict
 from ray import tune
 from pathlib import Path
 from torch.utils.data import DataLoader
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 
 
 class DataModule(pl.LightningDataModule):
@@ -54,16 +55,19 @@ def get_default_config(args):
     return dict(default_conf)
 
 
-def get_icafbirn(seed):
+def get_icafbirn(seed, fold=0):
     df = pd.read_csv('/data/users1/egeenjaar/local-global/data/ica_fbirn/info_df.csv', index_col=0)
-    trainval_index, test_index = train_test_split(
-        df.index.values, train_size=0.8, random_state=seed, stratify=df['sex'])
+    skf = StratifiedKFold(n_splits=10, shuffle=True, random_state=seed)
+    y = df['sz'].values
+    splits = skf.split(df.index.values, y)
+    splits = [split for split in splits]
+    trainval_index, test_index = splits[fold]
     train_index, valid_index = train_test_split(
         trainval_index, train_size=0.9, random_state=seed,
-        stratify=df.loc[trainval_index, 'sex'])
-    train_df = df.loc[train_index].copy()
-    valid_df = df.loc[valid_index].copy()
-    test_df = df.loc[test_index].copy()
+        stratify=y[trainval_index])
+    train_df = df.iloc[train_index].copy()
+    valid_df = df.iloc[valid_index].copy()
+    test_df = df.iloc[test_index].copy()
     return train_df, valid_df, test_df
 
 
@@ -76,24 +80,42 @@ def generate_version_name(config):
     return version
 
 
+#def get_hyperparameters(config):
+#    return {"train_loop_config": {
+#        # Unused parameter for Context-only model
+#        "num_layers": tune.choice([3, 4, 5, 6]) if not config['model'] == 'CO' else tune.choice([1]),
+#        "spatial_hidden_size": tune.choice([64, 128, 256]),
+#        # Unused parameter for Context-only model
+#        "temporal_hidden_size": tune.choice([128, 256, 512]) if not config['model'] == 'CO' else tune.choice([128]),
+#       "lr": tune.choice([1e-4, 5e-4, 1e-3]),
+#        "batch_size": tune.choice([64, 128]),
+#        # Unused parameter for Context-only model
+#        "beta": tune.choice([1e-5, 1e-4, 1e-3, 1e-2]),
+#        # Essentially 'beta' for the context-only model
+#        "gamma": tune.choice([1e-5, 1e-4, 1e-3]),
+#        "theta": tune.choice([1e-5, 1e-4, 1e-3]) if config['model'] == 'CDSVAE' else tune.choice([0]),
+#        "lambda": tune.choice([1e-2, 1e-1]) if "CF" in config['model'] else tune.choice([0]),
+#        "dropout": tune.choice([0, 0.1, 0.2])}
+#    }
+
+
 def get_hyperparameters(config):
     return {"train_loop_config": {
         # Unused parameter for Context-only model
-        "num_layers": tune.choice([3, 4, 5, 6]) if not config['model'] == 'CO' else tune.choice([1]),
-        "spatial_hidden_size": tune.choice([64, 128, 256]),
+        "num_layers": od.IntDistribution(low=3, high=5) if not config['model'] == 'CO' else od.CategoricalDistribution([1]),
+        "spatial_hidden_size": od.CategoricalDistribution([64, 128, 256]),
         # Unused parameter for Context-only model
-        "temporal_hidden_size": tune.choice([128, 256, 512]) if not config['model'] == 'CO' else tune.choice([128]),
-       "lr": tune.loguniform(1e-4, 2e-3),
-        "batch_size": tune.choice([64, 128]),
+        "temporal_hidden_size": od.CategoricalDistribution([128, 256, 512]) if not config['model'] == 'CO' else od.CategoricalDistribution([128]),
+        "lr": od.CategoricalDistribution([1e-4, 5e-4, 1e-3]),
+        "batch_size": od.CategoricalDistribution([64, 128]),
         # Unused parameter for Context-only model
-        "beta": tune.loguniform(1e-5, 1e-4),
+        "beta": od.IntDistribution(low=2, high=5), # These integers are converted to 1E-[int]
         # Essentially 'beta' for the context-only model
-        "gamma": tune.loguniform(1e-6, 1e-5),
-        "theta": tune.loguniform(1e-5, 1e-4) if config['model'] == 'CDSVAE' else tune.choice([0]),
-        "lambda": tune.loguniform(1e-2, 1e-1) if "CF" in config['model'] else tune.choice([0]),
-        "dropout": tune.choice([0, 0.1, 0.2])}
+        "gamma": od.IntDistribution(low=3, high=5), # These integers are converted to 1E-[int]
+        "theta": od.IntDistribution(low=3, high=3) if config['model'] == 'CDSVAE' else od.CategoricalDistribution([0]), # converted to 1E-[int]
+        "lambda": od.IntDistribution(low=1, high=3) if "CF" in config['model'] else od.CategoricalDistribution([0]), # converted to 1E-[int]
+        "dropout": od.FloatDistribution(low=0.0, step=0.1, high=0.2)}
     }
-
 
 def load_hyperparameters(p: Path):
     with p.open('r') as f:
@@ -127,8 +149,8 @@ def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
         'reconstruction': torch.empty((num_subjects, num_windows, config['window_size'], config['data_size']), device=device),
         'local_mean': torch.empty((num_subjects, num_windows, config['window_size'], config['local_size']), device=device),
         'local_sd': torch.empty((num_subjects, num_windows, config['window_size'], config['local_size']), device=device),
-        'context_mean': torch.empty((num_subjects, num_windows, config['context_size']), device=device),
-        'context_sd': torch.empty((num_subjects, num_windows, config['context_size']), device=device),
+        'context_mean': torch.empty((num_subjects, num_windows, model.context_size), device=device),
+        'context_sd': torch.empty((num_subjects, num_windows, model.context_size), device=device),
         'target': torch.empty((num_subjects, ), dtype=bool)
     }
     model.eval()
@@ -146,10 +168,12 @@ def embed_dataloader(config, model, dataloader) -> Dict[str, torch.Tensor]:
             x = x[(upsampling // 2)::upsampling]
         output_dict['input'][subj_ix, temp_ix] = x.permute(1, 0, 2)
         output_dict['reconstruction'][subj_ix, temp_ix] = model_output['x_hat'].permute(1, 0, 2)
-        output_dict['local_mean'][subj_ix, temp_ix] = model_output['local_dist'].mean.permute(1, 0, 2)
-        output_dict['local_sd'][subj_ix, temp_ix] = model_output['local_dist'].stddev.permute(1, 0, 2)
-        output_dict['context_mean'][subj_ix, temp_ix] = model_output['context_dist'].mean
-        output_dict['context_sd'][subj_ix, temp_ix] = model_output['context_dist'].stddev
+        if config['model'] != 'CO':
+            output_dict['local_mean'][subj_ix, temp_ix] = model_output['local_dist'].mean.permute(1, 0, 2)
+            output_dict['local_sd'][subj_ix, temp_ix] = model_output['local_dist'].stddev.permute(1, 0, 2)
+        if config['model'] != 'LVAE':
+            output_dict['context_mean'][subj_ix, temp_ix] = model_output['context_dist'].mean
+            output_dict['context_sd'][subj_ix, temp_ix] = model_output['context_dist'].stddev
         output_dict['target'][subj_ix] = y
     for key in output_dict.keys():
         output_dict[key] = output_dict[key].cpu()

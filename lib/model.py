@@ -35,11 +35,11 @@ class BaseModel(pl.LightningModule):
         self.lr = hyperparameters['lr']
         self.seed = config['seed']
         # Loss function hyperparameters
-        self.beta = hyperparameters['beta']
-        self.gamma = hyperparameters['gamma']
-        self.theta = hyperparameters['theta']
+        self.beta = pow(10, -hyperparameters['beta']) if hyperparameters['beta'] != 0 else 0
+        self.gamma = pow(10, -hyperparameters['gamma']) if hyperparameters['gamma'] != 0 else 0
+        self.theta = pow(10, -hyperparameters['theta']) if hyperparameters['theta'] != 0 else 0
         if 'lambda' in hyperparameters.keys():
-            self.lambda_ = hyperparameters['lambda']
+            self.lambda_ = pow(10, -hyperparameters['lambda']) if hyperparameters['lambda'] != 0 else 0
         self.anneal = 0.0
         self.loss_keys = [
             'mse',
@@ -157,37 +157,6 @@ class BaseModel(pl.LightningModule):
         va_dict['va_loss'] = loss.detach()
         self.log_dict(va_dict, on_step=False, prog_bar=False,
                       on_epoch=True, logger=False, sync_dist=True)
-        if self.viz:# Visualize representations
-            if context_z.shape[-1] > 2:
-                pca = PCA(n_components=2)
-                context_z = pca.fit_transform(context_z)
-            fig, axs = plt.subplots(1, 2)
-            axs[0].scatter(context_z[y == 0, 0], context_z[y == 0, 1],
-                        color='b', alpha=0.5)
-            axs[0].scatter(context_z[y == 1, 0], context_z[y == 1, 1],
-                        color='r', alpha=0.5)
-            axs[0].set_xlabel('Latent dimension 1')
-            axs[0].set_ylabel('Latent dimension 2')
-            axs[0].set_title('Context representations')
-            axs[0].axis('equal')
-            axs[1].scatter(local_z[:, y == 0, ..., 0].flatten(),
-                        local_z[:, y == 0, ..., 1].flatten(),
-                        color='b', alpha=0.2)
-            axs[1].scatter(local_z[:, y == 1, ..., 0].flatten(),
-                        local_z[:, y == 1, ..., 1].flatten(),
-                        color='r', alpha=0.2)
-            axs[1].set_xlabel('Latent dimension 1')
-            axs[1].set_ylabel('Latent dimension 2')
-            axs[1].set_title('Local representations')
-            axs[1].axis('equal')
-            plt.tight_layout()
-            plt.savefig(f'{self.logger.save_dir}/context.png', dpi=200)
-            # TODO": save these files in the specific lightning_logs dir
-            # (low priority)
-            # plt.savefig(
-            # f'{self.logger.save_dir}/{self.logger.version}/context.png', dpi=200)
-            plt.clf()
-            plt.close(fig)
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr)
@@ -228,7 +197,9 @@ class DSVAE(BaseModel):
             'prior_dist': prior_dist,
             'x_hat': x_hat,
             # This is only used for contrastive models
-            'context_dist_n': None
+            'context_dist_n': None,
+            'nf_local_z': None,
+            'cf_local_z': None
         }
 
     def embed_context(self, x):
@@ -334,7 +305,10 @@ class LVAE(BaseModel):
             'local_dist': local_dist,
             'prior_dist': prior_dist,
             'x_hat': x_hat,
-            'context_dist_n': None
+            # This is only used for contrastive models
+            'context_dist_n': None,
+            'nf_local_z': None,
+            'cf_local_z': None
         }
 
 
@@ -419,12 +393,10 @@ class CIDSVAE(CDSVAE):
 
 class CO(BaseModel):
     def __init__(self, *args, **kwargs):
-        print(args)
-        print(kwargs)
         #()
         # {'num_layers': 1, 'spatial_hidden_size': 128, 'temporal_hidden_size': 128, 'lr': 0.0010872422452394674, 'batch_size': 128, 'beta': 0, 'gamma': 0.000291063591313307, 'theta': 0}
-
         super().__init__(*args, **kwargs)
+        self.context_size = self.context_size + self.local_size * self.window_size
         self.temporal_encoder = ConvContextEncoder(
             self.input_size, self.spatial_hidden_size, self.context_size,
             self.window_size
@@ -445,8 +417,10 @@ class CO(BaseModel):
             'local_dist': D.Normal(torch.zeros_like(x_hat), 1.),
             'prior_dist': D.Normal(torch.zeros_like(x_hat), 1.),
             'x_hat': x_hat,
+            # This is only used for contrastive models
             'context_dist_n': None,
-            'context_dist_p': None
+            'nf_local_z': None,
+            'cf_local_z': None
         }
 
     def embed_context(self, x):

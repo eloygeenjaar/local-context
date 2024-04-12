@@ -90,7 +90,7 @@ class UpsampledICAfBIRN(ICAfBIRN):
         self.TR = 2.0
         original_timesteps = np.arange(
             0, self.num_timesteps * self.TR, self.TR)
-        self.upsampling_factor = 4
+        self.upsampling_factor = 2
         timesteps_ups = np.arange(
             - self.TR / 2, self.num_timesteps * self.TR - (self.TR / 2),
             self.TR / self.upsampling_factor)

@@ -1,9 +1,9 @@
 dataset: ICAfBIRN
-model: CFDSVAE
+model: LVAE
 
 local_size: 2
-context_size: 2
-contrastive_dim: 2
+context_size: 0
+contrastive_dim: 0
 
 num_layers: 3
 spatial_hidden_size: 128
@@ -17,5 +17,5 @@ batch_size: 64
 seed: 101010
 
 data_size: 53
-window_size: 20
+window_size: 30
 window_step: 5

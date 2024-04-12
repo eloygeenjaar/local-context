@@ -13,11 +13,11 @@ from sklearn.metrics import pairwise_distances_argmin_min
 
 
 config = get_default_config([''])
-config['model'] = 'CFDSVAE'
-config['local_size'] = 2
-config['context_size'] = 2
-config['seed'] = 42
-config['dataset'] = 'UpsampledICAfBIRN'
+config['model'] = 'DSVAE'
+config['local_size'] = 8
+config['context_size'] = 8
+config['seed'] = 1337
+config['dataset'] = 'ICAfBIRN'
 version = generate_version_name(config)
 result_p = Path(f'ray_results/{version}')
 ckpt_p = result_p / 'final.ckpt'
@@ -98,7 +98,7 @@ for i in range(2):
 axs[0, 0].set_title('Original')
 axs[0, 1].set_title('Counterfactual')
 axs[0, 2].set_title('Difference')
-plt.savefig('results/CFDSVAE_2_counterfactual_rec.png', dpi=400, bbox_inches="tight")
+plt.savefig('results/DSVAE_8_counterfactual_rec.png', dpi=400, bbox_inches="tight")
 plt.clf()
 plt.close(fig)
 
@@ -109,6 +109,6 @@ for i in range(2):
     axs[i, 1].plot(local[:, 1, i, 0], local[:, 1, i, 1], c='red' if labels[closest][i] else 'blue')
 axs[0, 0].set_title('Original')
 axs[0, 1].set_title('Counterfactual')
-plt.savefig('results/CFDSVAE_2_counterfactual_local.png', dpi=400, bbox_inches="tight")
+plt.savefig('results/DSVAE_8_counterfactual_local.png', dpi=400, bbox_inches="tight")
 plt.clf()
 plt.close(fig)

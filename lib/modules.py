@@ -174,6 +174,9 @@ class ConvContextEncoder(nn.Module):
     def __init__(self, input_size: int, hidden_size: int,
                  output_size: int, window_size: int):
         super().__init__()
+        # TODO: improve for future
+        window_size = 32
+        self.output_size = output_size
         self.layers = nn.Sequential(
             nn.Conv1d(input_size, hidden_size, kernel_size=4,
                       stride=2, padding=1),
@@ -182,26 +185,32 @@ class ConvContextEncoder(nn.Module):
                       stride=2, padding=1),
             nn.ELU(),
             nn.Flatten(),
-            nn.Linear(hidden_size * 2 *  (window_size // 4), hidden_size * 4),
+            nn.Linear(hidden_size * 2 * (window_size // 4), hidden_size * 4),
             nn.ELU(),
             nn.Dropout(0.1),
-            nn.Linear(hidden_size * 4, output_size)
+            nn.Linear(hidden_size * 4, 2 * output_size)
         )
 
     def forward(self, x):
-        return D.Normal(self.layers(x), 0.1)
+        x = F.pad(x, (1, 1))
+        x = self.layers(x)
+        mu, lv = torch.split(x, self.output_size, dim=-1)
+        sd = torch.exp(0.5 * lv)
+        return D.Normal(mu, sd)
 
 class ConvContextDecoder(nn.Module):
     def __init__(self, input_size: int, hidden_size: int,
                  output_size: int, window_size: int):
         super().__init__()
+        # TODO: improve for future
+        window_size = 32
         self.layers = nn.Sequential(
             nn.Linear(input_size, hidden_size * 4),
             nn.ELU(),
             nn.Linear(hidden_size * 4, (window_size // 4) * hidden_size * 2),
             nn.ELU(),
             nn.Dropout(0.1),
-            nn.Unflatten(1, (hidden_size * 2, 5)),
+            nn.Unflatten(1, (hidden_size * 2, window_size // 4)),
             nn.ConvTranspose1d(hidden_size * 2, hidden_size, kernel_size=4,
                       stride=2, padding=1),
             nn.ELU(),
@@ -210,4 +219,5 @@ class ConvContextDecoder(nn.Module):
         )
 
     def forward(self, x):
-        return self.layers(x)
+        # TODO improve
+        return self.layers(x)[:, :, 1:-1]
